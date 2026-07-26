@@ -30,7 +30,7 @@ test("server-renders the finished literary exploration", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>The Holy Office — A Gothic Exploration<\/title>/i);
-  assert.match(html, /ENTER THE PRISON/);
+  assert.match(html, /TAKE UP THE CLOAK/);
   assert.match(html, /A GOTHIC EXPLORATION AFTER W\. H\. IRELAND/);
   assert.match(html, /ABOUT THE TEXT/);
   assert.match(html, /og\.png/);
@@ -38,8 +38,9 @@ test("server-renders the finished literary exploration", async () => {
 });
 
 test("includes the complete playable dungeon and its literary notes", async () => {
-  const [game, css, packageJson] = await Promise.all([
+  const [game, worldData, css, packageJson] = await Promise.all([
     readFile(new URL("../app/InquisitionGame.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/world-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -56,7 +57,7 @@ test("includes the complete playable dungeon and its literary notes", async () =
     "The Chamber of Groans",
     "The Hidden Stair",
   ]) {
-    assert.match(game, new RegExp(place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(worldData, new RegExp(place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
   assert.match(game, /requestAnimationFrame/);
@@ -65,6 +66,10 @@ test("includes the complete playable dungeon and its literary notes", async () =
   assert.match(game, /pointerlockchange/);
   assert.match(game, /hitsDungeonCollider/);
   assert.match(game, /Touch controls/);
+  assert.match(game, /THE CLOAKED STRANGER/);
+  assert.match(game, /npcPosition/);
+  assert.match(worldData, /export const NPCS/);
+  assert.match(worldData, /dialogue:/);
   const world = await readFile(new URL("../app/three-world.ts", import.meta.url), "utf8");
   assert.match(world, /THREE\.WebGLRenderer/);
   assert.match(world, /DUNGEON_COLLIDERS/);

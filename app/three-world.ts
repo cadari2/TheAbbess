@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { NPCS, npcPosition } from "./world-data";
 
 export type PlayerView = {
   x: number;
@@ -1578,6 +1579,7 @@ export class DungeonRenderer {
   private materials: Record<string, THREE.Material>;
   private headLamp: THREE.PointLight;
   private world: Grid;
+  private patrols: { id: string; figure: THREE.Group }[] = [];
 
   constructor(canvas: HTMLCanvasElement, world: Grid) {
     this.world = world;
@@ -1610,6 +1612,7 @@ export class DungeonRenderer {
 
     this.buildArchitecture(world);
     this.buildRooms();
+    this.buildPatrols();
 
     // Morrowind interiors carried a substantial flat ambient term so surfaces
     // away from a lamp still showed their texture. Without it, the lamps'
@@ -2035,6 +2038,19 @@ export class DungeonRenderer {
     this.scene.add(moonLight, moonLight.target);
   }
 
+  private buildPatrols() {
+    for (const npc of NPCS) {
+      const figure = makePerson(this.materials, {
+        hood: npc.id !== "tribunal-clerk",
+        beard: npc.id === "gate-familiar",
+        scale: npc.id === "masked-watch" ? 1.03 : 0.96,
+      });
+      figure.userData.patrol = npc.id;
+      this.patrols.push({ id: npc.id, figure });
+      this.scene.add(figure);
+    }
+  }
+
   render(player: PlayerView, time: number) {
     const width = Math.max(1, this.renderer.domElement.clientWidth);
     const height = Math.max(1, this.renderer.domElement.clientHeight);
@@ -2062,6 +2078,14 @@ export class DungeonRenderer {
         Math.sin(time * 0.019 + lamp.seed * 2.1) * 0.035;
       lamp.light.intensity = lamp.base * flicker;
       lamp.flame.scale.y = 1.28 + Math.sin(time * 0.015 + lamp.seed) * 0.18;
+    }
+    for (const patrol of this.patrols) {
+      const npc = NPCS.find((candidate) => candidate.id === patrol.id);
+      if (!npc) continue;
+      const position = npcPosition(npc, time);
+      patrol.figure.position.set(position.x, 0, position.y);
+      patrol.figure.rotation.y = Math.PI / 2 - position.dir;
+      patrol.figure.position.y = Math.abs(Math.sin(time * 0.004 * npc.speed)) * 0.018;
     }
     this.renderer.render(this.scene, this.camera);
   }

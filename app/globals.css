@@ -483,6 +483,33 @@ kbd {
   letter-spacing: .04em;
 }
 
+.overheard {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 155px;
+  width: min(520px, 82vw);
+  padding: 14px 20px;
+  transform: translateX(-50%);
+  border-left: 2px solid #8f2730;
+  background: linear-gradient(90deg, rgba(10, 7, 6, .9), rgba(10, 7, 6, .52));
+  animation: whisper-in 500ms ease-out both;
+  text-shadow: 0 2px 8px #000;
+  pointer-events: none;
+}
+
+.overheard span,
+.lore-layer span {
+  color: #b18b50;
+  font: 600 8px/1.2 Arial, sans-serif;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.overheard p { margin: 7px 0 0; color: #e0cfad; font-size: 16px; font-style: italic; }
+
+@keyframes whisper-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+
 .hud-nav {
   position: absolute;
   z-index: 5;
@@ -577,6 +604,18 @@ kbd {
   line-height: 1.72;
 }
 
+.lore-layer {
+  margin: 12px 0;
+  padding: 17px 19px;
+  border: 1px solid #3f3122;
+  background: rgba(0, 0, 0, .18);
+  text-align: left;
+}
+
+.lore-layer p { margin: 8px 0 0; color: #b9aa91; font-size: 14px; line-height: 1.62; }
+.theme-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin: 18px 0 28px; }
+.theme-list i { padding: 6px 9px; border: 1px solid #59452e; color: #a78c65; font: 600 8px/1 Arial, sans-serif; letter-spacing: .12em; font-style: normal; text-transform: uppercase; }
+
 .return-button {
   padding: 13px 20px;
   font: 600 9px/1 Arial, sans-serif;
@@ -611,6 +650,8 @@ kbd {
   background: #3d3228;
   box-shadow: inset 0 0 0 1px rgba(207, 171, 110, .08);
 }
+
+.map-shroud { position: absolute; z-index: 1; background: rgba(4, 3, 3, .9); box-shadow: inset 0 0 16px #000; }
 
 .map-wall.material-2 { background: #592a24; }
 .map-wall.material-3 { background: #47453f; }

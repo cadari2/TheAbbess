@@ -1,9 +1,10 @@
 # The Holy Office
 
 A first-person gothic exploration of the prison described in the final chapters
-of W. H. Ireland's *The Abbess*, Volume II. Ten marked places to find, read and
-record: the gate, the outer office, the lighted passage, the tribunal chamber,
-two cells, the disguise wardrobe, the torture antechamber and the moon door.
+of W. H. Ireland's *The Abbess*, Volume II. You inhabit the unnamed cloaked guide
+who led Duca Bertocci to freedom: officials recognize the habit rather than the
+person beneath it while patrols circulate and speak around you. Ten layered
+places connect the gate, offices, tribunal, cells and concealed escape route.
 
 Built with React and [three.js](https://threejs.org/) on
 [vinext](https://github.com/cloudflare/vinext).
@@ -25,9 +26,11 @@ After `npm run dev`, open the local URL printed in the terminal (normally
 
 ## Rendering
 
-The whole world lives in `app/three-world.ts`. `app/InquisitionGame.tsx` owns
-movement, collision, the journal and the HUD, and drives `DungeonRenderer` once
-per frame.
+Shared layout, room, discovery and patrol data lives in `app/world-data.ts`.
+`app/three-world.ts` builds and animates the scene; `app/InquisitionGame.tsx`
+owns movement, collision, overheard dialogue, the survey, journal and HUD, and
+drives `DungeonRenderer` once per frame. `docs/textual-evidence.md` records what
+comes from the romance and what the adaptation invents.
 
 The look targets an early-2000s console RPG: low polygon counts, hand-painted
 texture sheets, and a substantial flat ambient term so surfaces away from a lamp
