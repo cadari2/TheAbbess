@@ -1044,8 +1044,10 @@ export class DungeonRenderer {
   private disposableTextures: THREE.Texture[] = [];
   private materials: Record<string, THREE.Material>;
   private headLamp: THREE.PointLight;
+  private world: Grid;
 
   constructor(canvas: HTMLCanvasElement, world: Grid) {
+    this.world = world;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -1129,6 +1131,53 @@ export class DungeonRenderer {
       // torus geometry through the people and furniture below.
       addBox(this.scene, ribMaterial, [13.6, 0.12, 0.16], [17, 4.08, z]);
     }
+  }
+
+  /**
+   * Verifies that a wall-mounted piece has masonry behind it across its whole
+   * width, and reports the gaps if it does not.
+   *
+   * Every room wall here is pierced by at least one doorway. A panel positioned
+   * by eye from the middle of a room looks mounted from that one viewpoint and
+   * then, from any other, is discovered hanging in the opening with the far
+   * room visible behind it. Knowing a decoration's inner face is at the cell
+   * boundary is not enough on its own; the cells it spans have to be solid too.
+   *
+   * `span` runs along `spanAxis`; `facing` is the direction along the other
+   * horizontal axis that the piece's front points, so the masonry is sampled
+   * just behind it.
+   */
+  private checkWallBacking(
+    label: string,
+    x: number,
+    z: number,
+    spanAxis: "x" | "z",
+    span: number,
+    facing: 1 | -1,
+  ) {
+    const samples = 11;
+    const gaps: string[] = [];
+    for (let i = 0; i < samples; i++) {
+      const offset = (i / (samples - 1) - 0.5) * span;
+      const sampleX = spanAxis === "x" ? x + offset : x - facing * 0.06;
+      const sampleZ = spanAxis === "x" ? z - facing * 0.06 : z + offset;
+      const gridX = Math.floor(sampleX);
+      const gridZ = Math.floor(sampleZ);
+      const solid =
+        gridZ >= 0 &&
+        gridZ < this.world.length &&
+        gridX >= 0 &&
+        gridX < this.world[gridZ].length &&
+        this.world[gridZ][gridX] !== "0";
+      if (!solid) gaps.push(`(${sampleX.toFixed(2)}, ${sampleZ.toFixed(2)})`);
+    }
+    if (gaps.length > 0) {
+      console.warn(
+        `[dungeon] "${label}" is unbacked at ${gaps.length}/${samples} sampled points: ` +
+          `${gaps.join(" ")}. It will read as floating in the opening.`,
+      );
+    }
+    return gaps.length === 0;
   }
 
   private addLamp(x: number, z: number, height = 3.25, intensity = 2.5, castShadow = false) {
@@ -1282,25 +1331,35 @@ export class DungeonRenderer {
     const inscription = mesh(new THREE.PlaneGeometry(5.1, 0.9), inscriptionMaterial);
     inscription.position.set(17, 3.35, 4.012);
     this.scene.add(inscription);
+    this.checkWallBacking("tribunal north inscription", 17, 4.012, "x", 5.1, 1);
     for (const x of [11.2, 12.8, 21.2, 22.8]) {
       const cross = makeScarletCross(m.redSilk, 0.48);
       cross.position.set(x, 2.2, 4.015);
       this.scene.add(cross);
+      this.checkWallBacking(`north cross x=${x}`, x, 4.015, "x", 0.24, 1);
     }
-    for (const [x, rotation] of [
-      [10.012, Math.PI / 2],
-      [23.988, -Math.PI / 2],
+    // The side walls are pierced: the west one by the passage doorway at z 8-9,
+    // the east one by the cell corridor at z 7-8. Both the crosses and the
+    // inscriptions used to be spaced evenly down the room's full length, which
+    // put one cross and most of each inscription directly across an opening.
+    // These positions keep every piece over solid masonry on both walls, so the
+    // two sides still read as a matched pair.
+    for (const [x, rotation, facing] of [
+      [10.012, Math.PI / 2, 1],
+      [23.988, -Math.PI / 2, -1],
     ] as const) {
-      for (const z of [5.2, 7.4, 9.6]) {
+      for (const z of [5.2, 6.4, 10.6]) {
         const cross = makeScarletCross(m.redSilk, 0.44);
         cross.position.set(x, 2.05, z);
         cross.rotation.y = rotation;
         this.scene.add(cross);
+        this.checkWallBacking(`side cross x=${x} z=${z}`, x, z, "z", 0.22, facing);
       }
-      const sideInscription = mesh(new THREE.PlaneGeometry(3.3, 0.58), inscriptionMaterial);
-      sideInscription.position.set(x, 3.35, 7.4);
+      const sideInscription = mesh(new THREE.PlaneGeometry(2.6, 0.58), inscriptionMaterial);
+      sideInscription.position.set(x, 3.35, 5.5);
       sideInscription.rotation.y = rotation;
       this.scene.add(sideInscription);
+      this.checkWallBacking(`side inscription x=${x}`, x, 5.5, "z", 2.6, facing);
     }
     this.addLamp(17, 7.7, 3.38, 4.1, true);
 
@@ -1326,6 +1385,7 @@ export class DungeonRenderer {
     mural.position.set(CELL_WEST_FACE, 2.05, 6.0);
     mural.rotation.y = Math.PI / 2;
     this.scene.add(mural);
+    this.checkWallBacking("cell mural", CELL_WEST_FACE, 6.0, "z", 1.7, 1);
     for (const z of [5.12, 6.88]) {
       addBox(this.scene, m.woodTrim, [0.09, 2.65, 0.11], [CELL_WEST_FACE + 0.01, 2.05, z]);
     }
@@ -1353,6 +1413,7 @@ export class DungeonRenderer {
     const goldCross = makeScarletCross(m.brass, 0.35);
     goldCross.position.set(31.6, 1.2, 14.03);
     this.scene.add(goldCross);
+    this.checkWallBacking("maddalena gold cross", 31.6, 14.03, "x", 0.17, 1);
     const web = new THREE.Group();
     const webMaterial = new THREE.LineBasicMaterial({ color: "#9b9485", transparent: true, opacity: 0.4 });
     for (let i = 0; i < 6; i++) {
@@ -1368,6 +1429,7 @@ export class DungeonRenderer {
     web.position.set(28.04, 3.2, 14.4);
     web.rotation.y = Math.PI / 2;
     this.scene.add(web);
+    this.checkWallBacking("maddalena web", 28.04, 14.4, "z", 0.84, 1);
     this.addLamp(30, 15.8, 2.8, 1.45);
 
     // Wardrobe and disguise chamber.
@@ -1421,9 +1483,15 @@ export class DungeonRenderer {
     for (let i = 0; i < 7; i++) {
       addBox(this.scene, m.stone, [1.55, 0.18, 0.62], [33, 0.09 + i * 0.18, 25.3 - i * 0.48]);
     }
-    const moonDoor = addBox(this.scene, m.woodTrim, [1.45, 2.85, 0.18], [33, 2.45, 21.6]);
+    // The stair chamber's north wall block spans z 21..22, so its inner face is
+    // z = 22. The door was centred at z 21.6, which put the whole leaf inside
+    // the masonry: the exit of the escape route was invisible from the room it
+    // is reached from. Seated against the face instead, with its ironwork on
+    // the room side rather than buried in the stone behind it.
+    const moonDoor = addBox(this.scene, m.woodTrim, [1.45, 2.85, 0.18], [33, 2.45, 22.09]);
     moonDoor.castShadow = true;
-    for (const x of [-0.48, 0, 0.48]) addBox(moonDoor, m.iron, [0.06, 2.65, 0.05], [x, 0, -0.12]);
+    for (const x of [-0.48, 0, 0.48]) addBox(moonDoor, m.iron, [0.06, 2.65, 0.05], [x, 0, 0.12]);
+    this.checkWallBacking("moon door", 33, 22.09 - 0.09, "x", 1.45, 1);
     const moonLight = new THREE.SpotLight("#9eb5cd", 3.5, 9, 0.3, 0.55, 1.2);
     moonLight.position.set(33, 4.5, 20.6);
     moonLight.target.position.set(33, 0, 25);
