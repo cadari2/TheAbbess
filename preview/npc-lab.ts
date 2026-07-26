@@ -29,7 +29,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.LinearToneMapping;
 renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // PCFSoft is deprecated and resolves to this
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#0d0b08");
@@ -76,7 +76,7 @@ const figures: Record<string, Figure> = {
   },
   secretary: {
     label: "secretary",
-    options: { seated: true, hair: true, face: "secretary", scale: 0.9, robe: "#1c1511" },
+    options: { seated: true, hair: true, face: "secretary", garment: "clerk", scale: 0.9, robe: "#1c1511" },
   },
   familiar: { label: "familiar (hooded)", options: { hood: true, scale: 0.98 } },
   masked: { label: "masked official", options: { hood: true, masked: true, scale: 1.1 } },
