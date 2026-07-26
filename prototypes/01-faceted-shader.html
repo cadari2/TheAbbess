@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>01 — Faceted shader pass</title>
+    <link rel="stylesheet" href="prototype.css">
+  </head>
+  <body class="shader">
+    <main class="prototype">
+      <section class="stage">
+        <div class="ceiling">
+        </div>
+        <div class="wall left">
+        </div>
+        <div class="wall right">
+        </div>
+        <div class="end-wall">
+        </div>
+        <div class="floor">
+        </div>
+        <div class="lamp">
+        </div>
+        <div class="plaque">MISERICORDIA ET JUSTITIA<small>recessed frame · 8 mm wall offset</small>
+      </div>
+      <div class="npc">
+        <div class="head">
+          <div class="hair">
+          </div>
+          <div class="face-lines">
+          </div>
+          <i class="eye l">
+          </i>
+          <i class="eye r">
+          </i>
+        </div>
+        <div class="torso">
+        </div>
+        <div class="arm l">
+          <i class="hand">
+          </i>
+        </div>
+        <div class="arm r">
+          <i class="hand">
+          </i>
+        </div>
+        <div class="robe">
+        </div>
+        <div class="belt">
+        </div>
+      </div>
+      <div class="tag">CURRENT MESHES · NEW LIGHT RESPONSE</div>
+    </section>
+    <aside class="sidebar">
+      <p class="kicker">Direction 01 · retrofit</p>
+      <h1>Faceted shader pass</h1>
+      <p class="subtitle">Preserve geometry; change how every surface resolves.</p>
+      <div class="metric">
+        <span>Cost</span>
+        <strong>Low–medium</strong>
+        <span>Risk</span>
+        <strong>Medium</strong>
+        <span>Resemblance</span>
+        <strong>Moderate</strong>
+      </div>
+      <h2>Concrete treatment</h2>
+      <ul>
+        <li>Three-band diffuse ramp with vertex-normal faceting.</li>
+        <li>No specular response on cloth, skin, or stone.</li>
+        <li>Palette posterization after linear lighting.</li>
+        <li>Warm, readable ambient floor and fixed-range fog.</li>
+      </ul>
+      <h2>Honest limitation</h2>
+      <p>A shader cannot repair silhouettes, anatomy, UV seams, or arms intersecting a torso. It makes the existing procedural cast more coherent, not genuinely authored.</p>
+      <nav class="nav">
+        <a href="index.html">INDEX</a>
+        <a href="02-painted-replacement.html">NEXT →</a>
+      </nav>
+    </aside>
+  </main>
+</body>
+</html>
