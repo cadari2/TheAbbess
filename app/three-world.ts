@@ -163,7 +163,7 @@ function addJoint(
   at: THREE.Vector3,
   radius: number,
 ) {
-  const item = mesh(new THREE.SphereGeometry(radius, 8, 6), material);
+  const item = mesh(new THREE.SphereGeometry(radius, 6, 4), material);
   item.position.copy(at);
   parent.add(item);
   return item;
@@ -351,13 +351,18 @@ function makeHead(
 ) {
   const head = new THREE.Group();
 
-  const skull = mesh(new THREE.SphereGeometry(HEAD_RADIUS, 14, 11), skin);
+  // Segment counts are held close to the body's. The limbs and garment volumes
+  // run 7-10 radial segments; a head at 18 gave the face facets a quarter the
+  // area of the ones on the arm beside it, so the head read as a smooth object
+  // that had been pasted onto a faceted one. Matching the two is what makes a
+  // figure read as a single carved thing.
+  const skull = mesh(new THREE.SphereGeometry(HEAD_RADIUS, 10, 8), skin);
   head.add(skull);
 
   const faceShell = new THREE.SphereGeometry(
     HEAD_RADIUS * 1.006,
-    18,
-    14,
+    12,
+    9,
     -Math.PI / 2 - FACE_HALF_SPAN,
     FACE_HALF_SPAN * 2,
     0.2,
@@ -374,8 +379,8 @@ function makeHead(
     const hairShell = mesh(
       new THREE.SphereGeometry(
         HEAD_RADIUS * 1.012,
-        14,
         10,
+        7,
         rearStart,
         Math.PI * 2 - FACE_HALF_SPAN * 2 + 0.24,
         0,
@@ -489,7 +494,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   }
   addBox(group, materials.darkLeather, [0.48, 0.052, 0.31], [0, torsoY - torsoHeight / 2, 0]);
   // Neck bridges the collar opening and the underside of the skull.
-  addCylinder(group, skin, 0.062, 0.075, 0.2, [0, collarTopY - 0.03, 0.004], [0, 0, 0], 8);
+  addCylinder(group, skin, 0.062, 0.075, 0.2, [0, collarTopY - 0.03, 0.004], [0, 0, 0], 7);
 
   const faceKey = options.face ?? (prisoner ? "young" : "mature");
   const faceMaterial =
@@ -517,8 +522,8 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     const cowl = mesh(
       new THREE.SphereGeometry(
         HEAD_RADIUS * 1.16,
-        16,
-        10,
+        12,
+        8,
         -Math.PI / 2 + cowlOpening,
         Math.PI * 2 - cowlOpening * 2,
         0,
@@ -530,9 +535,9 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     cowl.scale.set(HEAD_SCALE.x, HEAD_SCALE.y * 0.98, HEAD_SCALE.z);
     group.add(cowl);
     // A shallow brow band closes the top of the opening.
-    addCylinder(group, robe, 0.152, 0.156, 0.045, [0, headY + 0.108, 0.006], [0.28, 0, 0], 12);
+    addCylinder(group, robe, 0.152, 0.156, 0.045, [0, headY + 0.108, 0.006], [0.28, 0, 0], 8);
     // Cloth falling from the cowl onto the shoulders.
-    addCylinder(group, robe, 0.185, 0.3, 0.24, [0, shoulderY + 0.075, 0.006], [0, 0, 0], 12);
+    addCylinder(group, robe, 0.185, 0.3, 0.24, [0, shoulderY + 0.075, 0.006], [0, 0, 0], 10);
   }
 
   if (options.masked) {
@@ -557,7 +562,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
       addLimb(group, skin, shoulder, elbow, 0.062, 0.052);
       addJoint(group, skin, elbow, 0.055);
       addLimb(group, skin, elbow, wrist, 0.052, 0.043);
-      const hand = mesh(new THREE.SphereGeometry(0.052, 9, 7), skin);
+      const hand = mesh(new THREE.SphereGeometry(0.052, 6, 5), skin);
       hand.position.copy(wrist);
       hand.scale.set(0.72, 1, 0.5);
       group.add(hand);
@@ -575,7 +580,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
       addLimb(group, robe, shoulder, elbow, 0.095, 0.077, 10);
       addJoint(group, robe, elbow, 0.079);
       addLimb(group, robe, elbow, wrist, 0.077, 0.06, 10);
-      const hand = mesh(new THREE.SphereGeometry(0.05, 9, 7), skin);
+      const hand = mesh(new THREE.SphereGeometry(0.05, 6, 5), skin);
       hand.position.copy(wrist);
       hand.scale.set(0.72, 1, 0.5);
       group.add(hand);
