@@ -70,6 +70,174 @@ function standard(
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
+/**
+ * The flat fill characters are lit by in place of a physical indirect term.
+ *
+ * The room's own fill is an AmbientLight of #4c4034 at 1.15 plus a
+ * HemisphereLight at 1, which together come to roughly (0.27, 0.19, 0.12) of
+ * linear irradiance. Characters take a fraction of that and nothing else: no
+ * hemisphere gradient, no environment, no indirect specular. The reference
+ * figures are cut by a single source and go genuinely dark on the away side,
+ * which is the whole reason they read as carved rather than as photographs.
+ *
+ * Not zero, though. Zero indirect light against inverse-square point lamps
+ * leaves anyone more than two metres from a lamp as a black cutout on a lit
+ * wall. This is the one number to turn if characters sit wrong against the
+ * architecture: raise it and they flatten toward the room, lower it and they
+ * harden toward the reference.
+ */
+const CHARACTER_FILL = new THREE.Color("#4c4034").multiplyScalar(1.5);
+
+/** How far light wraps past the terminator, 0 being true Lambert. */
+const CHARACTER_WRAP = 0.28;
+
+const CHARACTER_VERTEX = /* glsl */ `
+  varying vec3 vViewPosition;
+  #ifdef CHAR_MAP
+    varying vec2 vCharUv;
+  #endif
+
+  #include <common>
+  #include <fog_pars_vertex>
+
+  void main() {
+    #ifdef CHAR_MAP
+      vCharUv = uv;
+    #endif
+    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+    // Negated to match the convention Three's own flat-shading path expects, so
+    // the cross product below yields an outward normal.
+    vViewPosition = - mvPosition.xyz;
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
+  }
+`;
+
+/**
+ * Characters are shaded by wrapped Lambert against the point lamps and nothing
+ * else. There is no specular lobe at any roughness, and no indirect term beyond
+ * a flat fill.
+ *
+ * This exists because MeshStandardMaterial cannot express it. Its
+ * RE_Direct_Physical always evaluates BRDF_GGX_Multiscatter and its indirect
+ * path always evaluates getAmbientLightIrradiance through an environment BRDF;
+ * neither is reachable from roughness or metalness, so no combination of
+ * material properties removes the sheen. Leaving the standard material behind
+ * is the only way to be rid of it.
+ *
+ * Normalisation deliberately mirrors Three's: irradiance is accumulated as
+ * colour x attenuation x N.L exactly as lights_physical does, then multiplied
+ * by RECIPROCAL_PI at the end the way BRDF_Lambert would. Without that these
+ * figures would render PI times brighter than the masonry beside them under the
+ * same lamp.
+ */
+const CHARACTER_FRAGMENT = /* glsl */ `
+  uniform vec3 diffuse;
+  uniform vec3 fill;
+  uniform float wrap;
+  uniform float lift;
+
+  #ifdef CHAR_MAP
+    uniform sampler2D charMap;
+    varying vec2 vCharUv;
+  #endif
+
+  varying vec3 vViewPosition;
+
+  #include <common>
+  #include <lights_pars_begin>
+  #include <fog_pars_fragment>
+
+  // Named apart from Three's getDistanceAttenuation so including
+  // lights_pars_begin above cannot collide with it, but numerically identical.
+  float charFalloff( const in float dist, const in float cutoff, const in float decay ) {
+    float falloff = 1.0 / max( pow( dist, decay ), 0.01 );
+    if ( cutoff > 0.0 ) {
+      falloff *= pow2( saturate( 1.0 - pow4( dist / cutoff ) ) );
+    }
+    return falloff;
+  }
+
+  void main() {
+    vec4 albedo = vec4( diffuse, 1.0 );
+    #ifdef CHAR_MAP
+      albedo *= texture2D( charMap, vCharUv );
+    #endif
+    // Raise the black point without touching the white one. A sheet painted as
+    // a black habit sits near 0.01 linear, where no lamp recovers a fold, but
+    // scaling it up to compensate also scales its pale collar past white and
+    // blows it out. This compresses [0,1] into [lift,1] instead, so the cloth
+    // lifts off black and anything already bright stays put.
+    albedo.rgb = lift + albedo.rgb * ( 1.0 - lift );
+
+    // One normal per triangle, taken from the derivatives of view position
+    // rather than from the interpolated normal attribute. Every facet resolves
+    // as its own plane; the geometry and its uploaded normals are untouched.
+    vec3 fdx = dFdx( vViewPosition );
+    vec3 fdy = dFdy( vViewPosition );
+    vec3 normal = normalize( cross( fdx, fdy ) );
+
+    vec3 irradiance = fill;
+
+    #if NUM_POINT_LIGHTS > 0
+      vec3 viewPosition = - vViewPosition;
+      for ( int i = 0; i < NUM_POINT_LIGHTS; i ++ ) {
+        vec3 toLight = pointLights[ i ].position - viewPosition;
+        float lightDistance = length( toLight );
+        vec3 direction = toLight / max( lightDistance, 1e-4 );
+        float attenuation = charFalloff(
+          lightDistance, pointLights[ i ].distance, pointLights[ i ].decay
+        );
+        // Wrapped rather than clamped at zero. A hard terminator across facets
+        // this large steps the whole side of a face to fill in one edge.
+        float lambert = saturate( ( dot( normal, direction ) + wrap ) / ( 1.0 + wrap ) );
+        irradiance += pointLights[ i ].color * attenuation * lambert;
+      }
+    #endif
+
+    gl_FragColor = vec4( albedo.rgb * irradiance * RECIPROCAL_PI, albedo.a );
+
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+/**
+ * A character surface: matte, unglossed, lit by the lamps and a flat fill.
+ *
+ * Shading flat is intrinsic here rather than a material flag, so there is no
+ * separate faceting step and no smooth-shaded character surface can be created
+ * by accident.
+ */
+function character(color: THREE.ColorRepresentation, map?: THREE.Texture, lift = 0) {
+  const material = new THREE.ShaderMaterial({
+    vertexShader: CHARACTER_VERTEX,
+    fragmentShader: CHARACTER_FRAGMENT,
+    lights: true,
+    fog: true,
+    defines: map ? { CHAR_MAP: "" } : {},
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.lights,
+      THREE.UniformsLib.fog,
+      {
+        diffuse: { value: new THREE.Color() },
+        fill: { value: new THREE.Color() },
+        wrap: { value: CHARACTER_WRAP },
+        lift: { value: lift },
+        charMap: { value: null },
+      },
+    ]),
+  });
+  // Set after the merge: UniformsUtils.merge clones every value it is given, so
+  // assigning a texture inside the literal above would hand the clone a
+  // detached copy and the sheet would never reach the shader.
+  material.uniforms.diffuse.value = new THREE.Color(color);
+  material.uniforms.fill.value = CHARACTER_FILL;
+  if (map) material.uniforms.charMap.value = map;
+  return material;
+}
+
 function mesh(
   geometry: THREE.BufferGeometry,
   material: THREE.Material,
@@ -79,6 +247,24 @@ function mesh(
   result.castShadow = shadows;
   result.receiveShadow = shadows;
   return result;
+}
+
+/**
+ * A flat graphic mounted on a wall: an inscription panel, a painted mural.
+ *
+ * Explicitly not a shadow caster. These sit a centimetre off the masonry so they
+ * do not z-fight with it, and a lamp anywhere but straight ahead of one throws
+ * that centimetre of separation onto the wall as a hard offset copy of the
+ * panel's own outline. The result is a sign with a drop shadow, which is
+ * precisely how a decal flush against a wall announces that it is floating in
+ * front of it. Nothing is lost by not casting: there is a wall immediately
+ * behind, so there is nowhere for the shadow to legitimately fall.
+ */
+function wallDecal(geometry: THREE.BufferGeometry, material: THREE.Material) {
+  const decal = new THREE.Mesh(geometry, material);
+  decal.castShadow = false;
+  decal.receiveShadow = true;
+  return decal;
 }
 
 function addBox(
@@ -139,6 +325,57 @@ function addLimb(
   return item;
 }
 
+const reportedLimbs = new Set<string>();
+
+/**
+ * Checks that a limb stays visible against the torso, and reports it if not.
+ *
+ * A limb that intersects the torso is normal and wanted — that is how an arm
+ * welds to a body with no rig to skin it. What is never wanted is a limb whose
+ * entire cross-section passes inside the torso's surface, because it vanishes
+ * for that stretch and re-emerges further along, reading as a detached forearm
+ * hanging in front of the chest. That is a silent failure: it looks correct from
+ * the one angle the numbers were tuned at, and the numbers here are tuned by
+ * hand against a profile that has itself been retuned several times.
+ *
+ * `exempt` is the fraction of the limb nearest its start that is allowed to be
+ * buried, so a shoulder can sit deliberately inside the chest.
+ */
+function checkLimbClearance(
+  label: string,
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  radiusStart: number,
+  radiusEnd: number,
+  torsoY: number,
+  torsoHeight: number,
+  exempt = 0,
+) {
+  const samples = 21;
+  let worst: { at: number; buried: number } | null = null;
+  for (let i = 0; i < samples; i++) {
+    const t = i / (samples - 1);
+    if (t < exempt) continue;
+    const y = start.y + (end.y - start.y) * t;
+    if (y < torsoY - torsoHeight / 2 || y > torsoY + torsoHeight / 2) continue;
+    const x = start.x + (end.x - start.x) * t;
+    const z = start.z + (end.z - start.z) * t;
+    const radius = radiusStart + (radiusEnd - radiusStart) * t;
+    // Positive means even the limb's outermost surface is inside the torso's.
+    const buried = torsoRadiusAt(y, torsoY, torsoHeight) - (Math.hypot(x, z) + radius);
+    if (!worst || buried > worst.buried) worst = { at: t, buried };
+  }
+  if (worst && worst.buried > -0.008 && !reportedLimbs.has(label)) {
+    reportedLimbs.add(label);
+    console.warn(
+      `[dungeon] limb "${label}" is inside the torso at ${(worst.at * 100).toFixed(0)}% of its ` +
+        `length (${(worst.buried * 1000).toFixed(0)}mm past the surface). It will read as ` +
+        `detached from the body.`,
+    );
+  }
+  return worst;
+}
+
 /** A rounded cap at a limb joint so consecutive segments read as continuous. */
 function addJoint(
   parent: THREE.Object3D,
@@ -146,7 +383,7 @@ function addJoint(
   at: THREE.Vector3,
   radius: number,
 ) {
-  const item = mesh(new THREE.SphereGeometry(radius, 8, 6), material);
+  const item = mesh(new THREE.SphereGeometry(radius, 6, 4), material);
   item.position.copy(at);
   parent.add(item);
   return item;
@@ -236,18 +473,135 @@ type PersonOptions = {
   beard?: boolean;
   hair?: boolean;
   face?: "mature" | "elder" | "secretary" | "young";
+  /** Which garment sheet clothes the figure. Prisoners always take their own. */
+  garment?: "official" | "clerk";
   scale?: number;
 };
 
 // Head radius before the per-axis skull scaling below. Faces, hoods, caps and
 // the neck are all sized from this so they stay locked together.
-const HEAD_RADIUS = 0.145;
+//
+// Measured against the reference figures, which stand 7.5 and 8.1 heads tall.
+// At 0.145 these figures were 5.7 heads — a head half again too large for the
+// body, which is most of what made them read as toys rather than as people. A
+// head is the unit everything else is judged against, so it has to be right
+// before any other proportion can be.
+const HEAD_RADIUS = 0.112;
 const HEAD_SCALE = new THREE.Vector3(0.84, 1.12, 0.9);
+const HEAD_HALF_HEIGHT = HEAD_RADIUS * HEAD_SCALE.y;
+const HEAD_HALF_WIDTH = HEAD_RADIUS * HEAD_SCALE.x;
+const HEAD_HALF_DEPTH = HEAD_RADIUS * HEAD_SCALE.z;
 // Horizontal half-angle of the textured face shell. Just past 80 degrees puts
 // the seam on the head's silhouette, where it is effectively invisible.
 const FACE_HALF_SPAN = 1.45;
-// Sub-rectangle of the portrait textures that actually contains the head.
-const FACE_BOUNDS = { u0: 0.175, u1: 0.825, v0: 0.075, v1: 0.965 };
+/**
+ * Where the face shell samples its sheet.
+ *
+ * The old portraits were front-on photographs floating on a field of flat tan,
+ * so this had to crop hard into the middle of the image to keep that field off
+ * the head — and even then the field wrapped around the jaw as a pale halo. The
+ * sheets are now painted as unwraps: the features sit in the middle, the ears
+ * run out to roughly u 0.08 and 0.92, the hair crosses the top, and the neck and
+ * chest occupy the bottom third. So U now runs nearly edge to edge, and V starts
+ * above the chest rather than at the very bottom of the frame.
+ */
+const FACE_BOUNDS = { u0: 0.08, u1: 0.92, v0: 0.3, v1: 1 };
+/**
+ * Where the rear-of-head shell samples its sheet: everything above the nape
+ * hairline. Below that line the sheets carry bare neck and shoulder skin, which
+ * belongs to the neck cylinder, not to the hair.
+ */
+const REAR_BOUNDS = { v0: 0.3, v1: 1 };
+/** Angular half-span of the rear hair shell, matching makeHead's geometry. */
+const REAR_HALF_SPAN = (Math.PI * 2 - FACE_HALF_SPAN * 2 + 0.24) / 2;
+
+/**
+ * Where each garment sheet's waist seam falls in V.
+ *
+ * Measured off the sheets rather than guessed — the strongest horizontal
+ * luminance break in each image — because the three of them disagree: the
+ * prisoner's gathering seam sits at 0.60, the abbess's at 0.64, the clerk's at
+ * 0.50. The torso volume takes the sheet above its own line and the skirt takes
+ * everything below, so no sheet hands the torso the top of a skirt.
+ */
+const GARMENT_WAIST_V: Record<string, number> = {
+  prisonerTunic: 0.6,
+  officialRobe: 0.64,
+  clerkRobe: 0.5,
+};
+/**
+ * Where each sheet stops being plain cloth and becomes collar, neckline and
+ * cuffs. All three cross over within a few percent of each other, so one line
+ * serves: below it the torso and the shoulder slope, above it the collar ring.
+ *
+ * Keeping the two apart matters. Handing the collar band to a wide shoulder cone
+ * stretched a neckline arc into a pale bib across the chest, and drew it a second
+ * time where the torso's own top edge reached the same rows.
+ */
+const GARMENT_COLLAR_V = 0.82;
+
+// The torso volume's profile. Everything that has to meet the torso — the
+// shoulder slope, the sleeve heads, the shoulder and elbow joints — is derived
+// from these rather than carrying its own hand-tuned copy of them, because that
+// is how the arms and the yoke drifted out of agreement with the body in the
+// first place.
+// Widest at the chest, narrowest at the waist. It used to be the other way
+// round — 0.225 at the top opening out to 0.26 at the bottom — so every figure
+// was a barrel that flared downwards, with no waist at all. Against the
+// reference figures these were close to twice as wide as they should be: their
+// waists measure 0.15 to 0.19 of standing height, where these measured 0.31.
+const TORSO_TOP_RADIUS = 0.168;
+const TORSO_BOTTOM_RADIUS = 0.14;
+const TORSO_SEGMENTS = 10;
+// Hips pick the waist back up below the belt; a human is not a cone from chest
+// to floor. Garment volumes below the waist start here.
+const HIP_RADIUS = 0.165;
+/**
+ * How deep the body is relative to how wide it is.
+ *
+ * A torso built as a prism around a circle is a tube, and reads as one however
+ * carefully it is tapered — which is why these figures still looked like
+ * barrels after their proportions were corrected. A human chest is roughly half
+ * again wider than it is deep. Flattening front to back is the difference
+ * between a person and a length of pipe.
+ */
+const BODY_DEPTH = 0.72;
+
+/**
+ * The radius of the torso's *surface* at a given height.
+ *
+ * Note the inscribed-radius correction. The torso is a ten-sided prism, not a
+ * cylinder, so between two vertices its face lies closer to the axis than the
+ * nominal radius by cos(pi/segments) — about 5%. Placing a limb against the
+ * nominal radius leaves it floating a few millimetres off the flat of a facet.
+ */
+function torsoRadiusAt(y: number, torsoY: number, torsoHeight: number) {
+  const bottom = torsoY - torsoHeight / 2;
+  const fraction = THREE.MathUtils.clamp((y - bottom) / torsoHeight, 0, 1);
+  const radius =
+    TORSO_BOTTOM_RADIUS + (TORSO_TOP_RADIUS - TORSO_BOTTOM_RADIUS) * fraction;
+  return radius * Math.cos(Math.PI / TORSO_SEGMENTS);
+}
+
+/**
+ * The nominal (vertex, not facet) radius of a tapered volume at a height.
+ *
+ * A belt has to clear the vertices of whatever it is buckled over, not its flat
+ * faces. Sized to the flats it sinks below the corners and survives only as a
+ * few dark slivers between them, which is what showed through as tabs on the
+ * prisoner's hips — the skirt there is wider than the torso the belt was
+ * measured against.
+ */
+function coneRadiusAt(
+  y: number,
+  centreY: number,
+  height: number,
+  radiusTop: number,
+  radiusBottom: number,
+) {
+  const fraction = THREE.MathUtils.clamp((y - (centreY - height / 2)) / height, 0, 1);
+  return radiusBottom + (radiusTop - radiusBottom) * fraction;
+}
 
 /**
  * Rewrites a geometry's UVs so a cap of a sphere samples a portrait texture as
@@ -275,6 +629,29 @@ function projectFaceUv(geometry: THREE.BufferGeometry, halfSpan: number) {
       FACE_BOUNDS.u0 + u * (FACE_BOUNDS.u1 - FACE_BOUNDS.u0),
       FACE_BOUNDS.v0 + v * (FACE_BOUNDS.v1 - FACE_BOUNDS.v0),
     );
+  }
+  uv.needsUpdate = true;
+  return geometry;
+}
+
+/**
+ * The same cylindrical unwrap as projectFaceUv, but centred on the back of the
+ * head so the rear sheet's crown whorl lands on the crown and its nape lands at
+ * the nape. Without this the hair shell samples a sphere's default UVs and the
+ * whorl ends up over one ear.
+ */
+function projectRearUv(geometry: THREE.BufferGeometry) {
+  const position = geometry.getAttribute("position");
+  const uv = geometry.getAttribute("uv");
+  geometry.computeBoundingBox();
+  const box = geometry.boundingBox!;
+  const height = Math.max(1e-5, box.max.y - box.min.y);
+  for (let i = 0; i < position.count; i++) {
+    // Characters face -Z, so the rear shell is centred on +Z.
+    const angle = Math.atan2(position.getX(i), position.getZ(i));
+    const u = THREE.MathUtils.clamp(angle / (REAR_HALF_SPAN * 2) + 0.5, 0, 1);
+    const v = (position.getY(i) - box.min.y) / height;
+    uv.setXY(i, u, REAR_BOUNDS.v0 + v * (REAR_BOUNDS.v1 - REAR_BOUNDS.v0));
   }
   uv.needsUpdate = true;
   return geometry;
@@ -310,6 +687,7 @@ function addGarmentVolume(
   position: [number, number, number],
   uvRange: [number, number],
   segments = 8,
+  depthScale = BODY_DEPTH,
 ) {
   const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments, 1);
   // Cylinder UVs start at +Z and run around, so u = 0.5 lands on -Z: the
@@ -317,6 +695,7 @@ function addGarmentVolume(
   remapUv(geometry, 0, 1, uvRange[0], uvRange[1]);
   const item = mesh(geometry, material);
   item.position.set(...position);
+  item.scale.z = depthScale;
   parent.add(item);
   return item;
 }
@@ -330,17 +709,23 @@ function makeHead(
   materials: Record<string, THREE.Material>,
   skin: THREE.Material,
   faceMaterial: THREE.Material,
+  hairMaterial: THREE.Material,
   options: { hair: boolean; hood: boolean; masked: boolean },
 ) {
   const head = new THREE.Group();
 
-  const skull = mesh(new THREE.SphereGeometry(HEAD_RADIUS, 14, 11), skin);
+  // Segment counts are held close to the body's. The limbs and garment volumes
+  // run 7-10 radial segments; a head at 18 gave the face facets a quarter the
+  // area of the ones on the arm beside it, so the head read as a smooth object
+  // that had been pasted onto a faceted one. Matching the two is what makes a
+  // figure read as a single carved thing.
+  const skull = mesh(new THREE.SphereGeometry(HEAD_RADIUS, 10, 8), skin);
   head.add(skull);
 
   const faceShell = new THREE.SphereGeometry(
     HEAD_RADIUS * 1.006,
-    18,
-    14,
+    12,
+    9,
     -Math.PI / 2 - FACE_HALF_SPAN,
     FACE_HALF_SPAN * 2,
     0.2,
@@ -351,39 +736,43 @@ function makeHead(
   head.add(face);
 
   if (options.hair && !options.hood && !options.masked) {
-    // Hair only needs to cover the rear of the skull; the portrait texture
-    // already carries the hairline across the front.
+    // Hair covers the rear of the skull; the face sheet already carries the
+    // hairline across the front. This used to be flat black, which left the back
+    // of every head a featureless dark ball — the bare skull seen from behind in
+    // the tribunal. It now carries its own painted sheet with the crown whorl and
+    // the nape in the right places.
     const rearStart = -Math.PI / 2 + FACE_HALF_SPAN - 0.12;
     const hairShell = mesh(
-      new THREE.SphereGeometry(
-        HEAD_RADIUS * 1.012,
-        14,
-        10,
-        rearStart,
-        Math.PI * 2 - FACE_HALF_SPAN * 2 + 0.24,
-        0,
-        1.85,
+      projectRearUv(
+        new THREE.SphereGeometry(
+          HEAD_RADIUS * 1.012,
+          10,
+          7,
+          rearStart,
+          REAR_HALF_SPAN * 2,
+          0,
+          // Down to the nape. Stopping at 1.85 left a band of bare skull between
+          // the hair's rim and the neck, which read as an undercut notch shaved
+          // into the back of every head. The sheets paint their own nape hairline,
+          // so the shell can run past the equator and let the art end the hair.
+          2.12,
+        ),
       ),
-      materials.hair,
+      hairMaterial,
     );
     head.add(hairShell);
   }
 
-  // Morrowind's characters never self-shadowed. Letting the skull cast into
-  // the shadow map drops a hard dark wedge from the chin down over the chest.
-  head.traverse((item) => {
-    item.castShadow = false;
-  });
   head.scale.copy(HEAD_SCALE);
   return head;
 }
 
 export function makePerson(materials: Record<string, THREE.Material>, options: PersonOptions = {}) {
   const group = new THREE.Group();
-  const robe = options.robe ? standard(options.robe, 0.98) : materials.blackCloth;
+  const robe = options.robe ? character(options.robe) : materials.blackCloth;
   // Matched to the portrait sheets' own skin tone so the neck and hands read as
   // the same person as the face.
-  const skin = standard(options.skin ?? "#9a7659", 1);
+  const skin = character(options.skin ?? "#9a7659");
   const seated = options.seated ?? false;
   const scale = options.scale ?? 1;
   const prisoner = options.prisoner ?? false;
@@ -396,94 +785,163 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   const shoulderTopY = torsoY + torsoHeight / 2;
   const shoulderY = shoulderTopY - 0.06;
   const collarTopY = shoulderTopY + 0.15;
-  const headY = collarTopY + HEAD_RADIUS * HEAD_SCALE.y - 0.03;
-  const garmentMaterial = prisoner ? materials.prisonerTunic : materials.officialRobe;
+  // Set so a few centimetres of neck clear the collar. It used to sit low
+  // enough that the collar ring's top edge crossed above the chin and the head
+  // grew straight out of the shoulders, which is a large part of why these read
+  // as tin men: the reference figures all carry the head proud of the collar.
+  const headY = collarTopY + HEAD_HALF_HEIGHT - 0.014;
+  // The belt line, needed before the lower body is built so each branch can
+  // report how wide its skirt is where the belt has to pass over it.
+  const beltY = torsoY - torsoHeight / 2;
+  let beltClears = torsoRadiusAt(beltY, torsoY, torsoHeight);
+
+  const garmentKey = prisoner
+    ? "prisonerTunic"
+    : options.garment === "clerk"
+      ? "clerkRobe"
+      : "officialRobe";
+  const garmentMaterial = materials[garmentKey];
+  // Each sheet's own waist seam divides torso from skirt.
+  const waistV = GARMENT_WAIST_V[garmentKey];
 
   // Lower body. The garment texture is mapped onto the body volumes
   // themselves; nothing is a flat panel floating in front of the mesh.
   if (prisoner) {
     for (const side of [-1, 1]) {
-      const thighTop = new THREE.Vector3(side * 0.115, hipY, 0.01);
-      const knee = new THREE.Vector3(side * 0.125, seated ? 0.51 : 0.48, seated ? -0.24 : 0);
-      const ankle = new THREE.Vector3(side * 0.125, 0.15, seated ? -0.32 : 0);
-      addLimb(group, materials.prisonerCloth, thighTop, knee, 0.105, 0.09, 7);
-      addJoint(group, materials.prisonerCloth, knee, 0.088);
-      addLimb(group, materials.prisonerCloth, knee, ankle, 0.09, 0.065, 7);
-      addJoint(group, materials.darkLeather, ankle, 0.07);
+      const thighTop = new THREE.Vector3(side * 0.094, hipY, 0.01);
+      const knee = new THREE.Vector3(side * 0.098, seated ? 0.51 : 0.48, seated ? -0.24 : 0);
+      const ankle = new THREE.Vector3(side * 0.1, 0.15, seated ? -0.32 : 0);
+      addLimb(group, materials.prisonerCloth, thighTop, knee, 0.071, 0.054, 7);
+      addJoint(group, materials.prisonerCloth, knee, 0.056);
+      addLimb(group, materials.prisonerCloth, knee, ankle, 0.058, 0.043, 7);
+      addJoint(group, materials.darkLeather, ankle, 0.047);
       addBox(
         group,
         materials.darkLeather,
-        [0.17, 0.15, 0.28],
-        [side * 0.125, 0.085, seated ? -0.4 : -0.06],
+        [0.105, 0.1, 0.24],
+        [side * 0.1, 0.06, seated ? -0.4 : -0.05],
       );
     }
-    addGarmentVolume(group, garmentMaterial, 0.25, 0.29, 0.34, [0, hipY + 0.04, 0.015], [0, 0.3]);
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.208, 0.34, [0, hipY + 0.04, 0.015], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, hipY + 0.04, 0.34, HIP_RADIUS, 0.208));
   } else if (seated) {
-    addGarmentVolume(group, garmentMaterial, 0.235, 0.28, 0.32, [0, 0.81, 0.015], [0, 0.32]);
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.222, 0.32, [0, 0.81, 0.015], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.81, 0.32, HIP_RADIUS, 0.222));
     for (const side of [-1, 1]) {
-      const thighTop = new THREE.Vector3(side * 0.12, hipY, 0);
-      const knee = new THREE.Vector3(side * 0.13, 0.5, -0.24);
-      const ankle = new THREE.Vector3(side * 0.13, 0.16, -0.31);
-      addLimb(group, robe, thighTop, knee, 0.095, 0.08, 7);
-      addJoint(group, robe, knee, 0.078);
-      addLimb(group, materials.darkLeather, knee, ankle, 0.075, 0.06, 7);
-      addJoint(group, materials.darkLeather, ankle, 0.065);
-      addBox(group, materials.darkLeather, [0.17, 0.14, 0.27], [side * 0.13, 0.09, -0.39]);
+      const thighTop = new THREE.Vector3(side * 0.098, hipY, 0);
+      const knee = new THREE.Vector3(side * 0.104, 0.5, -0.24);
+      const ankle = new THREE.Vector3(side * 0.104, 0.16, -0.31);
+      addLimb(group, robe, thighTop, knee, 0.073, 0.056, 7);
+      addJoint(group, robe, knee, 0.058);
+      addLimb(group, materials.darkLeather, knee, ankle, 0.056, 0.043, 7);
+      addJoint(group, materials.darkLeather, ankle, 0.046);
+      addBox(group, materials.darkLeather, [0.105, 0.1, 0.24], [side * 0.104, 0.06, -0.37]);
     }
   } else {
-    addGarmentVolume(group, garmentMaterial, 0.245, 0.34, 0.9, [0, 0.48, 0.025], [0, 0.34], 10);
-    addBox(group, materials.darkLeather, [0.19, 0.1, 0.29], [-0.145, 0.055, -0.08]);
-    addBox(group, materials.darkLeather, [0.19, 0.1, 0.29], [0.145, 0.055, -0.08]);
+    // A robe falls from the hips and widens to the hem; it does not start at
+    // the waist as wide as the chest.
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.275, 0.9, [0, 0.48, 0.025], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.48, 0.9, HIP_RADIUS, 0.275));
+    addBox(group, materials.darkLeather, [0.115, 0.09, 0.25], [-0.102, 0.05, -0.07]);
+    addBox(group, materials.darkLeather, [0.115, 0.09, 0.25], [0.102, 0.05, -0.07]);
   }
 
-  // Torso: one tapered volume carrying the garment texture, plus a shoulder
-  // yoke that closes the gap where the arms attach.
-  addGarmentVolume(group, garmentMaterial, 0.225, 0.26, torsoHeight, [0, torsoY, 0], [0.32, 1], 10);
-  // Shoulders taper up toward the neck, and the cone is seated on top of the
-  // torso rather than partway down it. Both matter: a straight-sided yoke left
-  // the cylinder's top cap facing the camera, and a yoke set below the torso's
-  // rim left that rim showing as a dark ring behind the neck.
-  // Sampled from the middle of the garment sheet, not its top edge: both sheets
-  // paint a dark shoulder shadow across the top, which on a cone reads as a
-  // black wedge hanging under the chin.
+  // Torso: one tapered volume carrying the garment texture, stopping below the
+  // sheet's collar band so the neckline is not drawn here as well as on the ring.
   addGarmentVolume(
     group,
     garmentMaterial,
-    0.115,
-    0.264,
-    0.19,
-    [0, collarTopY - 0.095, 0],
-    [0.6, 0.72],
-    10,
+    TORSO_TOP_RADIUS,
+    TORSO_BOTTOM_RADIUS,
+    torsoHeight,
+    [0, torsoY, 0],
+    [waistV, GARMENT_COLLAR_V],
+    TORSO_SEGMENTS,
   );
-  // Sleeve heads, so the arms grow out of cloth instead of out of thin air.
+  // Shoulders. This was a 0.19m cone flaring to a radius of 0.264 against a
+  // torso top of 0.225, so its rim stood 39mm proud the whole way round: a hard
+  // overhanging lip with the head perched above it, which is what made these
+  // figures read as lampshades. It is now a shallow slope whose bottom radius is
+  // the torso's own radius where the two meet, so there is no lip to catch the
+  // light, and it is short enough to read as a shoulder rather than a bell.
+  const shoulderSlopeBottom = shoulderTopY - 0.02;
+  addGarmentVolume(
+    group,
+    garmentMaterial,
+    0.134,
+    torsoRadiusAt(shoulderSlopeBottom, torsoY, torsoHeight) + 0.003,
+    0.13,
+    [0, shoulderSlopeBottom + 0.065, 0],
+    [GARMENT_COLLAR_V - 0.1, GARMENT_COLLAR_V],
+    TORSO_SEGMENTS,
+  );
+  // A short collar ring at the throat, which is what actually wears the collar
+  // band the sheets paint across their top edge.
+  addGarmentVolume(
+    group,
+    garmentMaterial,
+    0.082,
+    0.118,
+    0.055,
+    [0, collarTopY - 0.055, 0],
+    [GARMENT_COLLAR_V, 1],
+    TORSO_SEGMENTS,
+  );
+  // Shoulder caps, so the arms grow out of cloth instead of out of thin air.
+  // These were horizontal cylinders, which stuck out either side as hard
+  // angular tabs — pauldrons on a suit of armour rather than shoulders. A
+  // rounded cap is what the reference figures have: the silhouette runs neck,
+  // sloping trapezius, round deltoid, arm, with no corner anywhere along it.
   for (const side of [-1, 1]) {
-    const sleeve = addCylinder(
-      group,
-      garmentMaterial,
-      0.1,
-      0.118,
-      0.17,
-      [side * 0.208, shoulderTopY - 0.045, 0],
-      [0, 0, side * 0.26],
-      9,
-    );
-    sleeve.castShadow = true;
+    const deltoid = mesh(new THREE.SphereGeometry(0.075, 8, 6), garmentMaterial);
+    // Confined to the same plain shoulder cloth the slope wears. Default UVs
+    // span the sheet's whole height, which drew the pale collar band across
+    // each shoulder as a bright wedge.
+    remapUv(deltoid.geometry, 0, 1, GARMENT_COLLAR_V - 0.1, GARMENT_COLLAR_V);
+    deltoid.position.set(side * 0.165, shoulderTopY - 0.062, 0);
+    deltoid.scale.set(1, 0.92, BODY_DEPTH / 0.72 * 0.86);
+    deltoid.castShadow = true;
+    group.add(deltoid);
   }
-  addBox(group, materials.darkLeather, [0.48, 0.052, 0.31], [0, torsoY - torsoHeight / 2, 0]);
+  // The belt follows the torso's ten-sided profile. It used to be a 0.48 x 0.31
+  // box inside a prism of radius 0.247, so its four corners stood 39mm proud of
+  // the cloth and showed through as dark tabs on both hips.
+  const beltRadius = beltClears + 0.008;
+  addCylinder(
+    group,
+    materials.darkLeather,
+    beltRadius,
+    beltRadius,
+    0.052,
+    [0, beltY, 0],
+    [0, 0, 0],
+    TORSO_SEGMENTS,
+  ).scale.setZ(BODY_DEPTH);
   // Neck bridges the collar opening and the underside of the skull.
-  addCylinder(group, skin, 0.062, 0.075, 0.2, [0, collarTopY - 0.03, 0.004], [0, 0, 0], 8);
+  addCylinder(
+    group,
+    skin,
+    HEAD_HALF_WIDTH * 0.5,
+    HEAD_HALF_WIDTH * 0.62,
+    0.2,
+    [0, collarTopY - 0.03, 0.004],
+    [0, 0, 0],
+    7,
+  );
 
   const faceKey = options.face ?? (prisoner ? "young" : "mature");
-  const faceMaterial =
-    faceKey === "young"
-      ? materials.faceYoung
-      : faceKey === "elder"
-        ? materials.faceElder
-        : faceKey === "secretary"
-          ? materials.faceSecretary
-          : materials.faceMature;
-  const head = makeHead(materials, skin, faceMaterial, {
+  // Face and rear-of-head are always taken as a pair, so nobody wears one
+  // person's face over another's hair.
+  const sheetKey = faceKey === "young"
+    ? "Young"
+    : faceKey === "elder"
+      ? "Elder"
+      : faceKey === "secretary"
+        ? "Secretary"
+        : "Mature";
+  const faceMaterial = materials[`face${sheetKey}`];
+  const hairMaterial = materials[`hair${sheetKey}`];
+  const head = makeHead(materials, skin, faceMaterial, hairMaterial, {
     hair: options.hair || prisoner || !options.hood,
     hood: options.hood ?? false,
     masked: options.masked ?? false,
@@ -500,8 +958,8 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     const cowl = mesh(
       new THREE.SphereGeometry(
         HEAD_RADIUS * 1.16,
-        16,
-        10,
+        12,
+        8,
         -Math.PI / 2 + cowlOpening,
         Math.PI * 2 - cowlOpening * 2,
         0,
@@ -513,68 +971,122 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     cowl.scale.set(HEAD_SCALE.x, HEAD_SCALE.y * 0.98, HEAD_SCALE.z);
     group.add(cowl);
     // A shallow brow band closes the top of the opening.
-    addCylinder(group, robe, 0.152, 0.156, 0.045, [0, headY + 0.108, 0.006], [0.28, 0, 0], 12);
-    // Cloth falling from the cowl onto the shoulders.
-    addCylinder(group, robe, 0.185, 0.3, 0.24, [0, shoulderY + 0.075, 0.006], [0, 0, 0], 12);
+    addCylinder(
+      group,
+      robe,
+      HEAD_RADIUS * 1.06,
+      HEAD_RADIUS * 1.09,
+      0.042,
+      [0, headY + HEAD_HALF_HEIGHT * 0.66, 0.006],
+      [0.28, 0, 0],
+      8,
+    );
+    // Cloth falling from the cowl onto the shoulders. Sized off the torso it
+    // lands on; at 0.3 it stood 8cm proud of the body as a hard flared bell.
+    addCylinder(
+      group,
+      robe,
+      0.145,
+      torsoRadiusAt(shoulderY, torsoY, torsoHeight) + 0.05,
+      0.24,
+      [0, shoulderY + 0.075, 0.006],
+      [0, 0, 0],
+      TORSO_SEGMENTS,
+    );
   }
 
   if (options.masked) {
-    addBox(group, materials.eyeSocket, [0.036, 0.014, 0.01], [-0.045, headY + 0.025, -0.126]);
-    addBox(group, materials.eyeSocket, [0.036, 0.014, 0.01], [0.045, headY + 0.025, -0.126]);
+    for (const side of [-1, 1]) {
+      addBox(
+        group,
+        materials.eyeSocket,
+        [HEAD_HALF_WIDTH * 0.37, 0.013, 0.01],
+        [side * HEAD_HALF_WIDTH * 0.46, headY + HEAD_HALF_HEIGHT * 0.15, -HEAD_HALF_DEPTH * 0.97],
+      );
+    }
   }
 
   // Arms start inside the torso volume and carry joint caps at shoulder and
   // elbow, so limbs read as one continuous arm rather than loose sticks.
   if (options.prisoner) {
-    const leftShoulder = new THREE.Vector3(-0.21, shoulderY - 0.02, -0.01);
-    const rightShoulder = new THREE.Vector3(0.21, shoulderY - 0.02, -0.01);
-    const leftElbow = new THREE.Vector3(-0.27, torsoY - 0.06, -0.08);
-    const rightElbow = new THREE.Vector3(0.27, torsoY - 0.06, -0.08);
-    const leftWrist = new THREE.Vector3(0.09, torsoY + 0.01, -0.24);
-    const rightWrist = new THREE.Vector3(-0.09, torsoY + 0.08, -0.25);
+    // Bound wrists, crossed in front of the belly. The forearms are routed
+    // around the outside of the torso rather than straight across to the far
+    // side of the body: the earlier chord ran from the elbow through the
+    // torso's interior and re-emerged near the wrist, which buried the whole
+    // cross-section of the left forearm and left a hand apparently floating in
+    // front of the chest with no arm attached to it. Sinking the elbows forward
+    // to roughly the depth of the wrists keeps the whole span proud of the
+    // cloth. It also brings the forearms back to 28cm from the 40cm they needed
+    // to reach across the body.
+    const leftShoulder = new THREE.Vector3(-0.186, shoulderY - 0.02, -0.01);
+    const rightShoulder = new THREE.Vector3(0.186, shoulderY - 0.02, -0.01);
+    const leftElbow = new THREE.Vector3(-0.178, torsoY - 0.07, -0.145);
+    const rightElbow = new THREE.Vector3(0.178, torsoY - 0.085, -0.15);
+    const leftWrist = new THREE.Vector3(0.028, torsoY - 0.175, -0.222);
+    const rightWrist = new THREE.Vector3(-0.028, torsoY - 0.205, -0.246);
     for (const [shoulder, elbow, wrist] of [
       [leftShoulder, leftElbow, leftWrist],
       [rightShoulder, rightElbow, rightWrist],
     ]) {
-      addJoint(group, skin, shoulder, 0.068);
-      addLimb(group, skin, shoulder, elbow, 0.062, 0.052);
-      addJoint(group, skin, elbow, 0.055);
-      addLimb(group, skin, elbow, wrist, 0.052, 0.043);
-      const hand = mesh(new THREE.SphereGeometry(0.052, 9, 7), skin);
+      addJoint(group, skin, shoulder, 0.05);
+      addLimb(group, skin, shoulder, elbow, 0.045, 0.037);
+      addJoint(group, skin, elbow, 0.039);
+      addLimb(group, skin, elbow, wrist, 0.037, 0.03);
+      // The first fifth of the upper arm is meant to be inside the chest.
+      checkLimbClearance("prisoner upper arm", shoulder, elbow, 0.045, 0.037, torsoY, torsoHeight, 0.2);
+      checkLimbClearance("prisoner forearm", elbow, wrist, 0.037, 0.03, torsoY, torsoHeight);
+      // Hands are longer than they are wide and flattened front to back, so a
+      // wrist ends in something with a back and a palm rather than in a ball.
+      const hand = mesh(new THREE.SphereGeometry(0.043, 6, 5), skin);
       hand.position.copy(wrist);
-      hand.scale.set(0.72, 1, 0.5);
+      hand.scale.set(0.62, 1.25, 0.45);
       group.add(hand);
     }
   } else {
     for (const side of [-1, 1]) {
-      const shoulder = new THREE.Vector3(side * 0.22, shoulderY - 0.015, 0);
+      const shoulder = new THREE.Vector3(side * 0.19, shoulderY - 0.015, 0);
       const elbow = seated
-        ? new THREE.Vector3(side * 0.29, 1.08, -0.07)
-        : new THREE.Vector3(side * 0.29, 1.08, 0.01);
+        ? new THREE.Vector3(side * 0.222, 1.08, -0.07)
+        : new THREE.Vector3(side * 0.218, 1.06, 0.01);
       const wrist = seated
-        ? new THREE.Vector3(side * 0.18, 0.91, -0.34)
-        : new THREE.Vector3(side * 0.26, 0.76, -0.03);
-      addJoint(group, robe, shoulder, 0.098);
-      addLimb(group, robe, shoulder, elbow, 0.095, 0.077, 10);
-      addJoint(group, robe, elbow, 0.079);
-      addLimb(group, robe, elbow, wrist, 0.077, 0.06, 10);
-      const hand = mesh(new THREE.SphereGeometry(0.05, 9, 7), skin);
+        ? new THREE.Vector3(side * 0.158, 0.91, -0.32)
+        : new THREE.Vector3(side * 0.206, 0.74, -0.03);
+      addJoint(group, robe, shoulder, 0.064);
+      addLimb(group, robe, shoulder, elbow, 0.061, 0.05, 10);
+      addJoint(group, robe, elbow, 0.052);
+      addLimb(group, robe, elbow, wrist, 0.05, 0.04, 10);
+      const pose = seated ? "seated" : "standing";
+      checkLimbClearance(`${pose} upper arm`, shoulder, elbow, 0.061, 0.05, torsoY, torsoHeight, 0.2);
+      checkLimbClearance(`${pose} forearm`, elbow, wrist, 0.05, 0.04, torsoY, torsoHeight);
+      const hand = mesh(new THREE.SphereGeometry(0.042, 6, 5), skin);
       hand.position.copy(wrist);
-      hand.scale.set(0.72, 1, 0.5);
+      hand.scale.set(0.62, 1.25, 0.45);
       group.add(hand);
     }
   }
 
   if (options.cap) {
-    addBox(group, materials.blackCloth, [0.31, 0.045, 0.29], [0, headY + 0.16, 0.004]);
-    addBox(group, materials.blackCloth, [0.225, 0.08, 0.215], [0, headY + 0.122, 0.004]);
+    // Sized and placed off the head rather than in absolute metres, so a change
+    // to head size cannot leave the cap hovering above it or sunk into it.
+    addBox(
+      group,
+      materials.blackCloth,
+      [HEAD_HALF_WIDTH * 2.55, 0.042, HEAD_HALF_DEPTH * 2.22],
+      [0, headY + HEAD_HALF_HEIGHT * 0.98, 0.004],
+    );
+    addBox(
+      group,
+      materials.blackCloth,
+      [HEAD_HALF_WIDTH * 1.85, 0.075, HEAD_HALF_DEPTH * 1.65],
+      [0, headY + HEAD_HALF_HEIGHT * 0.75, 0.004],
+    );
     const tassel = addCylinder(
       group,
-      options.crimsonTassel ? materials.redSilk : materials.blackCloth,
+      options.crimsonTassel ? materials.redSilkFaceted : materials.blackCloth,
       0.018,
       0.021,
       0.16,
-      [0.145, headY + 0.08, 0.015],
+      [HEAD_HALF_WIDTH * 1.2, headY + HEAD_HALF_HEIGHT * 0.5, 0.015],
       [0, 0, 0.2],
       6,
     );
@@ -584,15 +1096,40 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   if (!options.prisoner && !options.hood) {
     // Clerical bands at the throat, tucked against the neck rather than
     // hovering in front of it.
-    addBox(group, materials.paper, [0.052, 0.115, 0.02], [-0.032, headY - 0.215, -0.066], [0.12, 0, 0.07]);
-    addBox(group, materials.paper, [0.052, 0.115, 0.02], [0.032, headY - 0.215, -0.066], [0.12, 0, -0.07]);
+    for (const side of [-1, 1]) {
+      addBox(
+        group,
+        materials.paperFaceted,
+        [0.042, 0.095, 0.018],
+        [side * 0.026, collarTopY - 0.085, -0.058],
+        [0.12, 0, side * -0.07],
+      );
+    }
   }
 
   if (options.cross) {
-    const cross = makeScarletCross(materials.redSilk, 0.42);
+    const cross = makeScarletCross(materials.redSilkFaceted, 0.42);
     cross.position.set(0, torsoY + 0.02, -0.25);
     group.add(cross);
   }
+
+  // Characters cast into the lamps' shadow maps but never receive from them.
+  // The reference figures are lit by one source with deep, unshadowed fill and
+  // carry no shadow cast onto them at all. Sampling a point lamp's cube map
+  // across a body this small mostly produced acne and a hard band where a
+  // shadow camera cut the torso, which is what put the dark stripe across the
+  // prisoner's chest.
+  //
+  // This also retires the old rule that the head must not cast: a skull could
+  // drop a wedge from the chin over the chest only because the chest received.
+  // The head can now shadow the room like the rest of the figure.
+  group.traverse((item) => {
+    const part = item as THREE.Mesh;
+    if (!part.isMesh) return;
+    part.castShadow = true;
+    part.receiveShadow = false;
+  });
+
   group.scale.setScalar(scale);
   return group;
 }
@@ -860,12 +1397,22 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
   // A second, tighter tiling of the same sheet for furniture. Tables and chairs
   // were flat untinted colour and read as orange plastic under the lamps.
   const furnitureWoodTexture = load("/textures/chestnut-panels.png", 2.4, 2.4);
-  const faceMatureTexture = loadSheet("/textures/face-mature-rpg.png");
-  const faceYoungTexture = loadSheet("/textures/face-young-rpg.png");
-  const faceElderTexture = loadSheet("/textures/face-elder-rpg.png");
-  const faceSecretaryTexture = loadSheet("/textures/face-secretary-rpg.png");
-  const officialRobeTexture = loadSheet("/textures/official-robe-rpg.png");
-  const prisonerTunicTexture = loadSheet("/textures/prisoner-tunic-rpg.png");
+  // Character sheets are painted as unwraps rather than as front-on portraits:
+  // face wraps with the ears at the edges, rear-of-head sheets with the crown
+  // whorl centred, and garments laid out for a cylinder with the neckline at the
+  // top and the hem at the bottom. The earlier -rpg.png portraits are gone; they
+  // were photographs on a flat field and could not be made to wrap.
+  const faceMatureTexture = loadSheet("/textures/mature-irish-woman-cylindrical-face-wrap-512.png");
+  const faceYoungTexture = loadSheet("/textures/young-irish-woman-cylindrical-face-wrap-512.png");
+  const faceElderTexture = loadSheet("/textures/elder-irish-woman-cylindrical-face-wrap-512.png");
+  const faceSecretaryTexture = loadSheet("/textures/secretary-cylindrical-face-wrap-512.png");
+  const hairMatureTexture = loadSheet("/textures/mature-irish-woman-rear-head-hair-512.png");
+  const hairYoungTexture = loadSheet("/textures/young-irish-woman-rear-head-hair-512.png");
+  const hairElderTexture = loadSheet("/textures/elder-irish-woman-rear-head-hair-512.png");
+  const hairSecretaryTexture = loadSheet("/textures/secretary-rear-head-hair-512.png");
+  const officialRobeTexture = loadSheet("/textures/abbess-senior-religious-garment-512.png");
+  const clerkRobeTexture = loadSheet("/textures/secretary-clerk-garment-512.png");
+  const prisonerTunicTexture = loadSheet("/textures/young-prisoner-garment-512.png");
 
   const clothTexture = makeCanvasTexture(256, 256, (ctx, w, h) => {
     ctx.fillStyle = "#756d64";
@@ -892,10 +1439,9 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
   // The garment and portrait sheets are painted art that already carries its
   // own light and shade. A near-neutral tint preserves that detail; the old
   // dark tints multiplied it down until only a silhouette survived.
-  const garment = (map: THREE.Texture, color: THREE.ColorRepresentation) =>
-    new THREE.MeshStandardMaterial({ map, color, roughness: 1 });
-  const portrait = (map: THREE.Texture) =>
-    new THREE.MeshStandardMaterial({ map, color: "#f2eae0", roughness: 1 });
+  const garment = (map: THREE.Texture, color: THREE.ColorRepresentation, lift = 0) =>
+    character(color, map, lift);
+  const portrait = (map: THREE.Texture) => character("#f2eae0", map);
 
   const materials: Record<string, THREE.Material> = {
     // Kept well below white: the stone sheet is already light, and a bright
@@ -960,19 +1506,27 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
       color: "#241820",
       roughness: 1,
     }),
-    blackCloth: new THREE.MeshStandardMaterial({
-      map: clothTexture,
-      bumpMap: clothTexture,
-      bumpScale: 0.012,
-      color: "#3b322c",
-      roughness: 1,
-    }),
-    officialRobe: garment(officialRobeTexture, "#b6afa4"),
-    prisonerTunic: garment(prisonerTunicTexture, "#d8cbb1"),
-    prisonerCloth: garment(prisonerTunicTexture, "#a8977a"),
+    // Character cloth. The bump map the room's velvet uses is dropped here: at
+    // a scale of 0.012 it only ever perturbed the specular lobe, and there is
+    // no longer a specular lobe on a person for it to perturb.
+    blackCloth: character("#3b322c", clothTexture),
+    // The sheets are painted at their intended value now, so the tints are close
+    // to neutral and only trim the highlights back. The abbess habit takes a
+    // black-point lift instead of a brighter tint: it is painted at a mean of
+    // 0.11 sRGB, under 0.011 linear, where no lamp recovers a fold, but it also
+    // carries a white neckline that a tint bright enough to fix the cloth would
+    // drive well past white.
+    officialRobe: garment(officialRobeTexture, "#f4efe6", 0.055),
+    clerkRobe: garment(clerkRobeTexture, "#f0e9dd", 0.02),
+    prisonerTunic: garment(prisonerTunicTexture, "#f2ead9"),
+    // Leg wrappings, untextured. They are cylinders that addLimb leaves with
+    // default UVs spanning the sheet's full height, which put the pale collar
+    // band at the top of the sheet around the top of each thigh. A flat tone
+    // taken from the tunic's own cloth is the honest fix at this scale.
+    prisonerCloth: character("#6a5f4a"),
     clothTrim: standard("#191411", 1),
     redSilk: standard("#7d1a24", 0.72),
-    darkLeather: standard("#40291b", 0.82),
+    darkLeather: character("#40291b"),
     // Dark and rough. A thin vertical bar always turns a fully light-facing
     // sliver toward the lamp, so it takes near-peak irradiance across its whole
     // visible width; anything but a low albedo clips it to a white stripe.
@@ -981,16 +1535,18 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     // Carved and painted wood. A light tint here made the corpus on the
     // crucifix read as a stark white mannequin under the tribunal lamp.
     figure: standard("#5d5140", 1),
-    hair: standard("#241a13", 1),
     faceMature: portrait(faceMatureTexture),
     faceYoung: portrait(faceYoungTexture),
     faceElder: portrait(faceElderTexture),
     faceSecretary: portrait(faceSecretaryTexture),
-    eyeSocket: standard("#150e0a", 1),
+    hairMature: portrait(hairMatureTexture),
+    hairYoung: portrait(hairYoungTexture),
+    hairElder: portrait(hairElderTexture),
+    hairSecretary: portrait(hairSecretaryTexture),
+    eyeSocket: character("#150e0a"),
     eyeWhite: standard("#b7a88f", 1),
     mouth: standard("#4e241e", 1),
-    mask: standard("#3b352d", 1),
-    skin: standard("#a08066", 1),
+    mask: character("#3b352d"),
     straw: standard("#8e7436", 1),
     strawLight: standard("#b89448", 1),
     strawDark: standard("#5e4826", 1),
@@ -1003,6 +1559,13 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     flame: new THREE.MeshBasicMaterial({ color: "#ffd078" }),
   };
 
+  // Paper dresses both a cleric's throat bands and the documents on the
+  // tribunal table; scarlet silk dresses both a chest cross and the crosses
+  // mounted along the chestnut walls. Characters take their own character-shaded
+  // copies so that shading people matte does not also flatten the room's props.
+  materials.paperFaceted = character("#b39a72");
+  materials.redSilkFaceted = character("#7d1a24");
+
   return { materials, textures };
 }
 
@@ -1014,8 +1577,10 @@ export class DungeonRenderer {
   private disposableTextures: THREE.Texture[] = [];
   private materials: Record<string, THREE.Material>;
   private headLamp: THREE.PointLight;
+  private world: Grid;
 
   constructor(canvas: HTMLCanvasElement, world: Grid) {
+    this.world = world;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -1028,7 +1593,10 @@ export class DungeonRenderer {
     this.renderer.toneMapping = THREE.LinearToneMapping;
     this.renderer.toneMappingExposure = 0.95;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // PCFSoftShadowMap is deprecated in this version of Three and silently
+    // resolves to PCFShadowMap anyway; naming it outright stops a per-run
+    // warning that was burying the dungeon's own diagnostics.
 
     this.scene.background = new THREE.Color("#0d0b08");
     // Linear fog over a fixed range reads like Morrowind's draw distance; the
@@ -1099,6 +1667,53 @@ export class DungeonRenderer {
       // torus geometry through the people and furniture below.
       addBox(this.scene, ribMaterial, [13.6, 0.12, 0.16], [17, 4.08, z]);
     }
+  }
+
+  /**
+   * Verifies that a wall-mounted piece has masonry behind it across its whole
+   * width, and reports the gaps if it does not.
+   *
+   * Every room wall here is pierced by at least one doorway. A panel positioned
+   * by eye from the middle of a room looks mounted from that one viewpoint and
+   * then, from any other, is discovered hanging in the opening with the far
+   * room visible behind it. Knowing a decoration's inner face is at the cell
+   * boundary is not enough on its own; the cells it spans have to be solid too.
+   *
+   * `span` runs along `spanAxis`; `facing` is the direction along the other
+   * horizontal axis that the piece's front points, so the masonry is sampled
+   * just behind it.
+   */
+  private checkWallBacking(
+    label: string,
+    x: number,
+    z: number,
+    spanAxis: "x" | "z",
+    span: number,
+    facing: 1 | -1,
+  ) {
+    const samples = 11;
+    const gaps: string[] = [];
+    for (let i = 0; i < samples; i++) {
+      const offset = (i / (samples - 1) - 0.5) * span;
+      const sampleX = spanAxis === "x" ? x + offset : x - facing * 0.06;
+      const sampleZ = spanAxis === "x" ? z - facing * 0.06 : z + offset;
+      const gridX = Math.floor(sampleX);
+      const gridZ = Math.floor(sampleZ);
+      const solid =
+        gridZ >= 0 &&
+        gridZ < this.world.length &&
+        gridX >= 0 &&
+        gridX < this.world[gridZ].length &&
+        this.world[gridZ][gridX] !== "0";
+      if (!solid) gaps.push(`(${sampleX.toFixed(2)}, ${sampleZ.toFixed(2)})`);
+    }
+    if (gaps.length > 0) {
+      console.warn(
+        `[dungeon] "${label}" is unbacked at ${gaps.length}/${samples} sampled points: ` +
+          `${gaps.join(" ")}. It will read as floating in the opening.`,
+      );
+    }
+    return gaps.length === 0;
   }
 
   private addLamp(x: number, z: number, height = 3.25, intensity = 2.5, castShadow = false) {
@@ -1215,6 +1830,7 @@ export class DungeonRenderer {
       seated: true,
       hair: true,
       face: "secretary",
+      garment: "clerk",
       scale: 0.9,
       robe: "#1c1511",
     });
@@ -1249,28 +1865,38 @@ export class DungeonRenderer {
       emissive: "#24140b",
       emissiveIntensity: 0.15,
     });
-    const inscription = mesh(new THREE.PlaneGeometry(5.1, 0.9), inscriptionMaterial);
+    const inscription = wallDecal(new THREE.PlaneGeometry(5.1, 0.9), inscriptionMaterial);
     inscription.position.set(17, 3.35, 4.012);
     this.scene.add(inscription);
+    this.checkWallBacking("tribunal north inscription", 17, 4.012, "x", 5.1, 1);
     for (const x of [11.2, 12.8, 21.2, 22.8]) {
       const cross = makeScarletCross(m.redSilk, 0.48);
       cross.position.set(x, 2.2, 4.015);
       this.scene.add(cross);
+      this.checkWallBacking(`north cross x=${x}`, x, 4.015, "x", 0.24, 1);
     }
-    for (const [x, rotation] of [
-      [10.012, Math.PI / 2],
-      [23.988, -Math.PI / 2],
+    // The side walls are pierced: the west one by the passage doorway at z 8-9,
+    // the east one by the cell corridor at z 7-8. Both the crosses and the
+    // inscriptions used to be spaced evenly down the room's full length, which
+    // put one cross and most of each inscription directly across an opening.
+    // These positions keep every piece over solid masonry on both walls, so the
+    // two sides still read as a matched pair.
+    for (const [x, rotation, facing] of [
+      [10.012, Math.PI / 2, 1],
+      [23.988, -Math.PI / 2, -1],
     ] as const) {
-      for (const z of [5.2, 7.4, 9.6]) {
+      for (const z of [5.2, 6.4, 10.6]) {
         const cross = makeScarletCross(m.redSilk, 0.44);
         cross.position.set(x, 2.05, z);
         cross.rotation.y = rotation;
         this.scene.add(cross);
+        this.checkWallBacking(`side cross x=${x} z=${z}`, x, z, "z", 0.22, facing);
       }
-      const sideInscription = mesh(new THREE.PlaneGeometry(3.3, 0.58), inscriptionMaterial);
-      sideInscription.position.set(x, 3.35, 7.4);
+      const sideInscription = wallDecal(new THREE.PlaneGeometry(2.6, 0.58), inscriptionMaterial);
+      sideInscription.position.set(x, 3.35, 5.5);
       sideInscription.rotation.y = rotation;
       this.scene.add(sideInscription);
+      this.checkWallBacking(`side inscription x=${x}`, x, 5.5, "z", 2.6, facing);
     }
     this.addLamp(17, 7.7, 3.38, 4.1, true);
 
@@ -1289,13 +1915,14 @@ export class DungeonRenderer {
     // masonry and invisible from the cell. The wall is also pierced by the
     // doorway at z 7..9, so the panel is centred clear of it.
     const CELL_WEST_FACE = 28.01;
-    const mural = mesh(
+    const mural = wallDecal(
       new THREE.PlaneGeometry(1.7, 2.48),
       new THREE.MeshStandardMaterial({ map: muralTexture, color: "#8a7264", roughness: 1 }),
     );
     mural.position.set(CELL_WEST_FACE, 2.05, 6.0);
     mural.rotation.y = Math.PI / 2;
     this.scene.add(mural);
+    this.checkWallBacking("cell mural", CELL_WEST_FACE, 6.0, "z", 1.7, 1);
     for (const z of [5.12, 6.88]) {
       addBox(this.scene, m.woodTrim, [0.09, 2.65, 0.11], [CELL_WEST_FACE + 0.01, 2.05, z]);
     }
@@ -1323,6 +1950,7 @@ export class DungeonRenderer {
     const goldCross = makeScarletCross(m.brass, 0.35);
     goldCross.position.set(31.6, 1.2, 14.03);
     this.scene.add(goldCross);
+    this.checkWallBacking("maddalena gold cross", 31.6, 14.03, "x", 0.17, 1);
     const web = new THREE.Group();
     const webMaterial = new THREE.LineBasicMaterial({ color: "#9b9485", transparent: true, opacity: 0.4 });
     for (let i = 0; i < 6; i++) {
@@ -1338,6 +1966,7 @@ export class DungeonRenderer {
     web.position.set(28.04, 3.2, 14.4);
     web.rotation.y = Math.PI / 2;
     this.scene.add(web);
+    this.checkWallBacking("maddalena web", 28.04, 14.4, "z", 0.84, 1);
     this.addLamp(30, 15.8, 2.8, 1.45);
 
     // Wardrobe and disguise chamber.
@@ -1391,9 +2020,15 @@ export class DungeonRenderer {
     for (let i = 0; i < 7; i++) {
       addBox(this.scene, m.stone, [1.55, 0.18, 0.62], [33, 0.09 + i * 0.18, 25.3 - i * 0.48]);
     }
-    const moonDoor = addBox(this.scene, m.woodTrim, [1.45, 2.85, 0.18], [33, 2.45, 21.6]);
+    // The stair chamber's north wall block spans z 21..22, so its inner face is
+    // z = 22. The door was centred at z 21.6, which put the whole leaf inside
+    // the masonry: the exit of the escape route was invisible from the room it
+    // is reached from. Seated against the face instead, with its ironwork on
+    // the room side rather than buried in the stone behind it.
+    const moonDoor = addBox(this.scene, m.woodTrim, [1.45, 2.85, 0.18], [33, 2.45, 22.09]);
     moonDoor.castShadow = true;
-    for (const x of [-0.48, 0, 0.48]) addBox(moonDoor, m.iron, [0.06, 2.65, 0.05], [x, 0, -0.12]);
+    for (const x of [-0.48, 0, 0.48]) addBox(moonDoor, m.iron, [0.06, 2.65, 0.05], [x, 0, 0.12]);
+    this.checkWallBacking("moon door", 33, 22.09 - 0.09, "x", 1.45, 1);
     const moonLight = new THREE.SpotLight("#9eb5cd", 3.5, 9, 0.3, 0.55, 1.2);
     moonLight.position.set(33, 4.5, 20.6);
     moonLight.target.position.set(33, 0, 25);
