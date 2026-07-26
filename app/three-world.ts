@@ -13,55 +13,13 @@ type Grid = string[][];
 const WALL_HEIGHT = 4.2;
 const EYE_HEIGHT = 1.62;
 
-export type DungeonCollider =
-  | { shape: "box"; x: number; z: number; halfX: number; halfZ: number }
-  | { shape: "circle"; x: number; z: number; radius: number };
-
-// Collision volumes mirror the substantial room props created below.
-export const DUNGEON_COLLIDERS: DungeonCollider[] = [
-  { shape: "box", x: 5, z: 25.72, halfX: 2.15, halfZ: 0.16 },
-  { shape: "circle", x: 3.25, z: 24.4, radius: 0.42 },
-  { shape: "box", x: 6.75, z: 24.7, halfX: 0.48, halfZ: 0.48 },
-  { shape: "circle", x: 3.35, z: 23.3, radius: 0.38 },
-  { shape: "box", x: 5.15, z: 19.4, halfX: 1.3, halfZ: 0.62 },
-  { shape: "circle", x: 4.35, z: 18.48, radius: 0.4 },
-  { shape: "circle", x: 5.95, z: 18.48, radius: 0.4 },
-  { shape: "box", x: 17, z: 7.65, halfX: 1.28, halfZ: 2.78 },
-  { shape: "box", x: 17, z: 10.2, halfX: 1.4, halfZ: 0.9 },
-  { shape: "circle", x: 15.45, z: 5.15, radius: 0.38 },
-  { shape: "circle", x: 15.45, z: 6.45, radius: 0.38 },
-  { shape: "circle", x: 15.45, z: 7.75, radius: 0.38 },
-  { shape: "circle", x: 15.45, z: 9.05, radius: 0.38 },
-  { shape: "circle", x: 17, z: 4.5, radius: 0.38 },
-  { shape: "circle", x: 18.55, z: 8.65, radius: 0.42 },
-  { shape: "circle", x: 18.6, z: 9.65, radius: 0.35 },
-  { shape: "box", x: 30.7, z: 9.25, halfX: 0.46, halfZ: 0.92 },
-  { shape: "circle", x: 31.65, z: 6.15, radius: 0.3 },
-  { shape: "box", x: 30.7, z: 17.6, halfX: 0.46, halfZ: 0.92 },
-  { shape: "box", x: 10.7, z: 19.6, halfX: 0.5, halfZ: 0.9 },
-  { shape: "box", x: 12.65, z: 21.25, halfX: 0.9, halfZ: 0.36 },
-  { shape: "circle", x: 19.5, z: 20.25, radius: 0.44 },
-  { shape: "box", x: 24.15, z: 22, halfX: 0.15, halfZ: 1.65 },
-  { shape: "box", x: 27.3, z: 23.1, halfX: 1.28, halfZ: 0.95 },
-  { shape: "box", x: 28.9, z: 24.4, halfX: 0.92, halfZ: 1.08 },
-];
-
-export function hitsDungeonCollider(x: number, z: number, radius = 0.22) {
-  return DUNGEON_COLLIDERS.some((collider) => {
-    if (collider.shape === "circle") {
-      return Math.hypot(x - collider.x, z - collider.z) < radius + collider.radius;
-    }
-    const nearestX = Math.max(
-      collider.x - collider.halfX,
-      Math.min(x, collider.x + collider.halfX),
-    );
-    const nearestZ = Math.max(
-      collider.z - collider.halfZ,
-      Math.min(z, collider.z + collider.halfZ),
-    );
-    return Math.hypot(x - nearestX, z - nearestZ) < radius;
-  });
-}
+export {
+  DUNGEON_COLLIDERS,
+  PLAYER_RADIUS,
+  hitsCollider as hitsDungeonCollider,
+  isBlockedAt,
+  type DungeonCollider,
+} from "./world/colliders.ts";
 
 function standard(
   color: THREE.ColorRepresentation,
@@ -1993,8 +1951,13 @@ export class DungeonRenderer {
     this.addLamp(19.5, 21.8, 3.1, 2.5, true);
 
     // Non-graphic torture antechamber.
+    // Hangs raised in the doorway rather than closing it. Lowered, its teeth and
+    // its collider sealed the only route into the Chamber of Groans and the Moon
+    // Stair beyond, stranding the last two discoveries behind a prop. Raised, it
+    // still reads as the institution's barrier — standing open, as everything
+    // here stands open to the habit.
     const grille = makePortcullis(m);
-    grille.position.set(24.15, 0, 22);
+    grille.position.set(24.15, 1.95, 22);
     grille.rotation.y = Math.PI / 2;
     grille.scale.set(0.76, 1, 1);
     this.scene.add(grille);
@@ -2002,9 +1965,14 @@ export class DungeonRenderer {
     rack.position.set(27.3, 0, 23.1);
     rack.rotation.y = 0.35;
     this.scene.add(rack);
+    // Set along the south wall beside the rack. Lying diagonally across the east
+    // side, it left a 0.18 gap to the moon-stair doorway — narrower than the
+    // player — so the apparatus itself sealed the room's second exit. Grouping it
+    // with the rack also reads better: the apparatus occupies the far end and the
+    // route past it stays walkable.
     const narrowTable = makeTable(m, 1, 2.2);
-    narrowTable.position.set(28.9, 0, 24.4);
-    narrowTable.rotation.y = 0.5;
+    narrowTable.position.set(27.4, 0, 24.9);
+    narrowTable.rotation.y = Math.PI / 2 - 0.15;
     this.scene.add(narrowTable);
     const pulley = mesh(new THREE.TorusGeometry(0.48, 0.09, 8, 18), m.iron);
     pulley.position.set(29.45, 2.45, 20.55);

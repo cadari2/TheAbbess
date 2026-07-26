@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DungeonRenderer, hitsDungeonCollider } from "./three-world";
+import { DungeonRenderer } from "./three-world";
 import {
   DISCOVERIES as discoveries,
   H,
@@ -10,8 +10,10 @@ import {
   W,
   WORLD,
   npcPosition,
+  roomNameAtPosition,
   type Discovery,
 } from "./world-data";
+import { PLAYER_RADIUS, SPAWN, WORLD_MODEL, isBlockedAt } from "./world/index.ts";
 
 function nearestDiscovery(x: number, y: number) {
   let nearest: Discovery | null = null;
@@ -26,29 +28,14 @@ function nearestDiscovery(x: number, y: number) {
   return distance < 2.15 ? nearest : null;
 }
 
-function roomName(x: number, y: number) {
-  return (
-    roomZones.find((r) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2)
-      ?.name ?? "THE SUBTERRANEAN MAZE"
-  );
-}
+const roomName = roomNameAtPosition;
 
-function isWall(x: number, y: number) {
-  const gx = Math.floor(x);
-  const gy = Math.floor(y);
-  return gx < 0 || gy < 0 || gx >= W || gy >= H || WORLD[gy][gx] !== "0";
-}
-
-function isBlocked(x: number, y: number, radius = 0.28) {
-  const samples = [
-    [x - radius, y - radius],
-    [x + radius, y - radius],
-    [x - radius, y + radius],
-    [x + radius, y + radius],
-  ];
-  return samples.some(([sampleX, sampleY]) => isWall(sampleX, sampleY)) ||
-    hitsDungeonCollider(x, y, radius);
-}
+/**
+ * Movement collision. Shares one implementation with the reachability tests, so
+ * a corridor the suite calls walkable is the same corridor the player walks.
+ */
+const isBlocked = (x: number, y: number, radius = PLAYER_RADIUS) =>
+  isBlockedAt(WORLD_MODEL, x, y, radius);
 
 function initialPlayer() {
   if (typeof window !== "undefined") {
@@ -58,8 +45,10 @@ function initialPlayer() {
     if (start === "office") return { x: 7.25, y: 21.25, dir: -2.28, pitch: 0.02 };
     if (start === "cells") return { x: 30, y: 8, dir: Math.PI, pitch: 0 };
     if (start === "vault") return { x: 19.5, y: 23.2, dir: -Math.PI / 2, pitch: 0 };
+    if (start === "groans") return { x: 26.5, y: 21.7, dir: 0, pitch: 0 };
+    if (start === "moon") return { x: 33.5, y: 24, dir: -Math.PI / 2, pitch: 0.12 };
   }
-  return { x: 5, y: 24.5, dir: -Math.PI / 2, pitch: 0 };
+  return { ...SPAWN };
 }
 
 export default function InquisitionGame() {
