@@ -60,10 +60,51 @@ test("includes the complete playable dungeon and its literary notes", async () =
   }
 
   assert.match(game, /requestAnimationFrame/);
-  assert.match(game, /renderWorld/);
-  assert.match(game, /MISERICORDIA\s+ET\s+JUSTITIA/);
+  assert.match(game, /DungeonRenderer/);
+  assert.match(game, /requestPointerLock/);
+  assert.match(game, /pointerlockchange/);
+  assert.match(game, /hitsDungeonCollider/);
   assert.match(game, /Touch controls/);
+  const world = await readFile(new URL("../app/three-world.ts", import.meta.url), "utf8");
+  assert.match(world, /THREE\.WebGLRenderer/);
+  assert.match(world, /DUNGEON_COLLIDERS/);
+  assert.match(world, /addLimb/);
+  assert.match(world, /MISERICORDIA\s+ET\s+JUSTITIA/);
+  assert.match(world, /stone-wall\.png/);
   assert.match(css, /prefers-reduced-motion/);
   assert.match(css, /@media \(max-width: 760px\), \(pointer: coarse\)/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+});
+
+test("uses modeled RPG characters instead of portrait cards", async () => {
+  const world = await readFile(new URL("../app/three-world.ts", import.meta.url), "utf8");
+  const characterStart = world.indexOf("function makePerson");
+  const characterEnd = world.indexOf("function makeChair");
+  const character = world.slice(characterStart, characterEnd);
+
+  assert.ok(characterStart >= 0 && characterEnd > characterStart);
+
+  // The face is a curved shell welded to the skull and unwrapped onto the
+  // portrait sheet, not a flat card hovering in front of the head.
+  assert.match(world, /function makeHead/);
+  assert.match(world, /function projectFaceUv/);
+  assert.match(character, /makeHead\(materials, skin, faceMaterial/);
+
+  // Garment sheets are mapped onto the body volumes themselves. The old
+  // makeGarmentPanel quads stood proud of the torso as floating slabs.
+  assert.match(world, /function addGarmentVolume/);
+  assert.match(character, /addGarmentVolume\(group, garmentMaterial/);
+  assert.doesNotMatch(world, /makeGarmentPanel|makeFaceGeometry/);
+  assert.match(character, /garmentMaterial/);
+  assert.match(character, /materials\.prisonerCloth/);
+  assert.doesNotMatch(character, /CircleGeometry|faceMask|transparent:\s*true/);
+
+  // Collar, neck and head all chain off the top of the torso, so they cannot
+  // drift apart and leave a gap of bare background under the chin.
+  assert.match(character, /const shoulderTopY = torsoY \+ torsoHeight \/ 2/);
+  assert.match(character, /const headY = collarTopY \+/);
+
+  assert.match(world, /familiar\.position\.set\(x,\s*0,\s*18\.64\)/);
+  assert.match(world, /secretary\.position\.set\(17,\s*0,\s*4\.58\)/);
+  assert.match(world, /inquisitor\.position\.set\(15\.45,\s*0,\s*z\)/);
 });

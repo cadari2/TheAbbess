@@ -1,8 +1,12 @@
-# vinext-starter
+# The Holy Office
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+A first-person gothic exploration of the prison described in the final chapters
+of W. H. Ireland's *The Abbess*, Volume II. Ten marked places to find, read and
+record: the gate, the outer office, the lighted passage, the tribunal chamber,
+two cells, the disguise wardrobe, the torture antechamber and the moon door.
+
+Built with React and [three.js](https://threejs.org/) on
+[vinext](https://github.com/cloudflare/vinext).
 
 ## Prerequisites
 
@@ -13,8 +17,82 @@ Drizzle support.
 ```bash
 npm install
 npm run dev
-npm run build
 ```
+
+There is no standalone `index.html` in this project. It renders through Node.js.
+After `npm run dev`, open the local URL printed in the terminal (normally
+`http://localhost:3000`).
+
+## Rendering
+
+The whole world lives in `app/three-world.ts`. `app/InquisitionGame.tsx` owns
+movement, collision, the journal and the HUD, and drives `DungeonRenderer` once
+per frame.
+
+The look targets an early-2000s console RPG: low polygon counts, hand-painted
+texture sheets, and a substantial flat ambient term so surfaces away from a lamp
+still show their texture. A few rules keep it coherent.
+
+- **Characters are single volumes, not stacks of decals.** Faces are a curved
+  shell welded to the skull and unwrapped onto a portrait sheet (`makeHead` /
+  `projectFaceUv`); garments are mapped onto the body geometry itself
+  (`addGarmentVolume`). Nothing is a flat card floating in front of a mesh.
+- **Collar, neck and head chain off the top of the torso**, so no pose can open
+  a gap of bare background under a chin.
+- **Metal stays dark and rough.** A thin vertical bar turns a fully
+  light-facing sliver toward a lamp along its whole length; with a bright albedo
+  it clips to a white stripe.
+- **Tiled world textures use maximum anisotropy.** These corridors are narrow
+  enough that walls are routinely seen at grazing angles, where a low setting
+  collapses the tiling into a blank bright band.
+- **Wall blocks span whole grid cells.** A room's inner wall face is at the
+  cell boundary, not its centre — decoration placed half a metre short of that
+  disappears inside the masonry.
+
+### Inspecting the world
+
+`preview/` is a development-only harness that loads the same
+`app/three-world.ts` without the React app, HUD or pointer lock:
+
+```bash
+npx vite --config preview/vite.config.mts
+```
+
+- `/` renders the dungeon. The URL hash is the camera pose, `#x,z,yaw,pitch`,
+  so `#18.55,10,-1.5708,0` drops you in front of the prisoner.
+- `/lab.html` lines every character up on a neutral lit turntable. Call
+  `setView(orbit, distance, height)` and `focus(index)` from the console.
+
+Both pages expose `probe(yawOffset, pitch)` and `near(x, y, z, radius)` in the
+console, for identifying exactly which mesh and material produced a given pixel.
+
+## cPanel / Passenger
+
+This project can run on a cPanel account only if the host provides Node.js and
+Passenger/Application Manager. Use Node.js 22 or newer, because that is the
+version required by the project.
+
+1. Upload and extract the project outside `public_html`, for example
+   `/home/USERNAME/holy-office`.
+2. Open cPanel → **Software → Application Manager** (or **Setup Node.js App**
+   on CloudLinux).
+3. Create an application using Node.js 22+, set the application root to the
+   extracted folder, and set the startup file to `cpanel-app.js`.
+4. Open cPanel Terminal in that folder and run:
+
+   ```bash
+   npm install
+   npm run build
+   ```
+
+5. Return to Application Manager and enable/install dependencies, then restart
+   the application. Point the domain or subdomain at the Node application.
+
+Do not upload only `public/`, and do not try to open `app/page.tsx` directly.
+The `cpanel-app.js` adapter serves the generated `dist/` files through
+Passenger. If Application Manager is missing, ask the hosting provider to
+enable Node.js 22 and Passenger; ordinary shared Apache-only hosting cannot run
+this package as-is.
 
 This starter does not use `wrangler.jsonc`.
 

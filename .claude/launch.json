@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "world-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "preview/vite.config.mts"],
+      "port": 5199
+    }
+  ]
+}

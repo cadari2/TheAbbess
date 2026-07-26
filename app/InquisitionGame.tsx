@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DungeonRenderer, hitsDungeonCollider } from "./three-world";
 
 type Discovery = {
   id: string;
@@ -10,26 +11,6 @@ type Discovery = {
   kicker: string;
   text: string;
   detail: string;
-};
-
-type Prop = {
-  x: number;
-  y: number;
-  kind:
-    | "lamp"
-    | "cross"
-    | "table"
-    | "inquisitor"
-    | "secretary"
-    | "prisoner"
-    | "stool"
-    | "rushes"
-    | "mural"
-    | "wardrobe"
-    | "guard"
-    | "door";
-  scale?: number;
-  tint?: string;
 };
 
 const W = 36;
@@ -184,32 +165,6 @@ const discoveries: Discovery[] = [
   },
 ];
 
-const props: Prop[] = [
-  { x: 5, y: 19.2, kind: "table", scale: 0.75, tint: "#492d20" },
-  { x: 4, y: 19, kind: "guard", scale: 0.85 },
-  { x: 6.2, y: 19, kind: "guard", scale: 0.85 },
-  { x: 17, y: 7.7, kind: "table", scale: 2.2, tint: "#160c0e" },
-  { x: 17, y: 5.1, kind: "secretary", scale: 0.9 },
-  { x: 17, y: 10.4, kind: "inquisitor", scale: 1.12, tint: "#8d1622" },
-  { x: 14.3, y: 8.5, kind: "inquisitor", scale: 0.92 },
-  { x: 14.3, y: 7.2, kind: "inquisitor", scale: 0.92 },
-  { x: 14.3, y: 5.9, kind: "inquisitor", scale: 0.92 },
-  { x: 14.3, y: 4.7, kind: "inquisitor", scale: 0.92 },
-  { x: 17, y: 8.8, kind: "prisoner", scale: 1.05 },
-  { x: 18.5, y: 9.6, kind: "stool", scale: 0.55 },
-  { x: 21.3, y: 4.1, kind: "cross", scale: 2.6 },
-  { x: 17, y: 7.4, kind: "lamp", scale: 1.3 },
-  { x: 30, y: 8.8, kind: "rushes", scale: 1.15 },
-  { x: 31.8, y: 6.3, kind: "stool", scale: 0.55 },
-  { x: 28.2, y: 6.3, kind: "mural", scale: 1.35 },
-  { x: 30, y: 17.7, kind: "rushes", scale: 1.15 },
-  { x: 31.3, y: 15.1, kind: "cross", scale: 0.38 },
-  { x: 11, y: 19.4, kind: "wardrobe", scale: 1.4 },
-  { x: 19.4, y: 20.5, kind: "guard", scale: 1.18 },
-  { x: 19.5, y: 20, kind: "lamp", scale: 0.85 },
-  { x: 33, y: 23.2, kind: "door", scale: 1.45 },
-];
-
 const roomZones = [
   { name: "THE PRISON GATE", x1: 2, y1: 22, x2: 8, y2: 27 },
   { name: "THE OUTER OFFICE", x1: 2, y1: 17, x2: 8, y2: 22 },
@@ -249,319 +204,37 @@ function isWall(x: number, y: number) {
   return gx < 0 || gy < 0 || gx >= W || gy >= H || WORLD[gy][gx] !== "0";
 }
 
-function drawProp(
-  ctx: CanvasRenderingContext2D,
-  prop: Prop,
-  px: number,
-  py: number,
-  dir: number,
-  cw: number,
-  ch: number,
-  depthBuffer: Float32Array,
-) {
-  const dx = prop.x - px;
-  const dy = prop.y - py;
-  const dist = Math.hypot(dx, dy);
-  let angle = Math.atan2(dy, dx) - dir;
-  while (angle < -Math.PI) angle += Math.PI * 2;
-  while (angle > Math.PI) angle -= Math.PI * 2;
-  const fov = Math.PI / 3;
-  if (Math.abs(angle) > fov * 0.68 || dist < 0.2) return;
-  const screenX = cw / 2 + (angle / (fov / 2)) * (cw / 2);
-  const centerCol = Math.max(0, Math.min(cw - 1, Math.floor(screenX)));
-  if (dist > depthBuffer[centerCol] + 0.3) return;
-  const base = (ch / Math.max(dist, 0.4)) * (prop.scale ?? 1);
-  const floor = ch / 2 + ch / Math.max(dist, 1) * 0.18;
-  const x = screenX;
-  const y = floor;
-  ctx.save();
-  ctx.globalAlpha = Math.max(0.28, Math.min(1, 1.35 - dist / 18));
-  const shadow = ctx.createRadialGradient(x, y, 2, x, y, base * 0.55);
-  shadow.addColorStop(0, "rgba(0,0,0,.55)");
-  shadow.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = shadow;
-  ctx.beginPath();
-  ctx.ellipse(x, y, base * 0.48, base * 0.12, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  const dark = "#100b0a";
-  const brown = prop.tint ?? "#3d2418";
-  const gold = "#d29a49";
-  const red = prop.tint ?? "#7f1822";
-  if (prop.kind === "lamp") {
-    const glow = ctx.createRadialGradient(x, y - base * 0.9, 1, x, y - base * 0.9, base);
-    glow.addColorStop(0, "rgba(255,200,103,.8)");
-    glow.addColorStop(0.25, "rgba(221,139,50,.23)");
-    glow.addColorStop(1, "rgba(150,62,12,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(x - base, y - base * 1.9, base * 2, base * 2);
-    ctx.strokeStyle = "#45301f";
-    ctx.lineWidth = Math.max(1, base * 0.03);
-    ctx.beginPath();
-    ctx.moveTo(x, y - base * 2.1);
-    ctx.lineTo(x, y - base * 1.1);
-    ctx.stroke();
-    ctx.fillStyle = gold;
-    ctx.beginPath();
-    ctx.ellipse(x, y - base, base * 0.14, base * 0.22, 0, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (prop.kind === "cross") {
-    ctx.fillStyle = "#24150f";
-    ctx.fillRect(x - base * 0.09, y - base * 1.5, base * 0.18, base * 1.5);
-    ctx.fillRect(x - base * 0.42, y - base * 1.17, base * 0.84, base * 0.16);
-    ctx.strokeStyle = "#7d6750";
-    ctx.lineWidth = Math.max(1, base * 0.025);
-    ctx.beginPath();
-    ctx.arc(x, y - base * 1.18, base * 0.13, 0, Math.PI * 2);
-    ctx.moveTo(x, y - base * 1.05);
-    ctx.lineTo(x, y - base * 0.58);
-    ctx.moveTo(x, y - base * 0.94);
-    ctx.lineTo(x - base * 0.23, y - base * 0.73);
-    ctx.moveTo(x, y - base * 0.94);
-    ctx.lineTo(x + base * 0.23, y - base * 0.73);
-    ctx.stroke();
-  } else if (prop.kind === "table") {
-    ctx.fillStyle = brown;
-    ctx.fillRect(x - base * 0.62, y - base * 0.54, base * 1.24, base * 0.38);
-    ctx.fillStyle = "#a91e28";
-    for (let i = -2; i <= 2; i++) {
-      ctx.fillRect(x + i * base * 0.22 - 1, y - base * 0.42, 2, base * 0.12);
-      ctx.fillRect(x + i * base * 0.22 - base * 0.04, y - base * 0.38, base * 0.08, 2);
-    }
-    ctx.fillStyle = dark;
-    ctx.fillRect(x - base * 0.52, y - base * 0.18, base * 0.12, base * 0.23);
-    ctx.fillRect(x + base * 0.4, y - base * 0.18, base * 0.12, base * 0.23);
-  } else if (
-    prop.kind === "inquisitor" ||
-    prop.kind === "secretary" ||
-    prop.kind === "guard" ||
-    prop.kind === "prisoner"
-  ) {
-    const robe =
-      prop.kind === "prisoner" ? "#756553" : prop.kind === "secretary" ? "#241810" : dark;
-    ctx.fillStyle = "#b89a7c";
-    ctx.beginPath();
-    ctx.arc(x, y - base * 1.18, base * 0.11, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = robe;
-    ctx.beginPath();
-    ctx.moveTo(x - base * 0.11, y - base * 1.07);
-    ctx.lineTo(x - base * 0.3, y - base * 0.12);
-    ctx.lineTo(x + base * 0.3, y - base * 0.12);
-    ctx.lineTo(x + base * 0.11, y - base * 1.07);
-    ctx.closePath();
-    ctx.fill();
-    if (prop.kind === "inquisitor") {
-      ctx.fillStyle = "#050505";
-      ctx.fillRect(x - base * 0.16, y - base * 1.34, base * 0.32, base * 0.08);
-      ctx.fillStyle = red;
-      ctx.fillRect(x - base * 0.025, y - base * 0.94, base * 0.05, base * 0.25);
-      ctx.fillRect(x - base * 0.1, y - base * 0.86, base * 0.2, base * 0.045);
-    }
-    if (prop.kind === "guard") {
-      ctx.fillStyle = "#0b0908";
-      ctx.beginPath();
-      ctx.moveTo(x - base * 0.17, y - base * 1.23);
-      ctx.lineTo(x, y - base * 1.43);
-      ctx.lineTo(x + base * 0.17, y - base * 1.23);
-      ctx.closePath();
-      ctx.fill();
-    }
-  } else if (prop.kind === "stool") {
-    ctx.fillStyle = "#4a2b19";
-    ctx.fillRect(x - base * 0.3, y - base * 0.45, base * 0.6, base * 0.16);
-    ctx.fillRect(x - base * 0.22, y - base * 0.29, base * 0.08, base * 0.29);
-    ctx.fillRect(x + base * 0.14, y - base * 0.29, base * 0.08, base * 0.29);
-  } else if (prop.kind === "rushes") {
-    ctx.fillStyle = "#5b4a24";
-    ctx.beginPath();
-    ctx.ellipse(x, y - base * 0.12, base * 0.55, base * 0.22, -0.15, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#a58842";
-    ctx.lineWidth = 1;
-    for (let i = -5; i <= 5; i++) {
-      ctx.beginPath();
-      ctx.moveTo(x + i * base * 0.08, y - base * 0.28);
-      ctx.lineTo(x + i * base * 0.1, y);
-      ctx.stroke();
-    }
-  } else if (prop.kind === "mural") {
-    ctx.fillStyle = "#2a160f";
-    ctx.fillRect(x - base * 0.5, y - base * 1.45, base, base * 1.35);
-    ctx.fillStyle = "#7c261e";
-    ctx.beginPath();
-    ctx.moveTo(x, y - base * 1.34);
-    ctx.lineTo(x - base * 0.34, y - base * 0.48);
-    ctx.lineTo(x + base * 0.34, y - base * 0.48);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = gold;
-    ctx.beginPath();
-    ctx.arc(x - base * 0.11, y - base * 1.12, base * 0.035, 0, Math.PI * 2);
-    ctx.arc(x + base * 0.11, y - base * 1.12, base * 0.035, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#ab8a59";
-    ctx.lineWidth = Math.max(1, base * 0.016);
-    for (let i = 0; i < 7; i++) {
-      ctx.beginPath();
-      ctx.moveTo(x - base * 0.44, y - base * (0.37 - i * 0.035));
-      ctx.lineTo(x + base * 0.36, y - base * (0.37 - i * 0.035));
-      ctx.stroke();
-    }
-  } else if (prop.kind === "wardrobe") {
-    ctx.fillStyle = "#321c13";
-    ctx.fillRect(x - base * 0.42, y - base * 1.35, base * 0.84, base * 1.25);
-    ctx.fillStyle = "#100b0b";
-    ctx.fillRect(x - base * 0.32, y - base * 1.22, base * 0.64, base * 1.02);
-    ctx.fillStyle = "#1d1513";
-    ctx.beginPath();
-    ctx.moveTo(x - base * 0.1, y - base * 1.15);
-    ctx.lineTo(x - base * 0.32, y - base * 0.36);
-    ctx.lineTo(x + base * 0.25, y - base * 0.24);
-    ctx.lineTo(x + base * 0.08, y - base * 1.15);
-    ctx.closePath();
-    ctx.fill();
-  } else if (prop.kind === "door") {
-    ctx.fillStyle = "#160f0c";
-    ctx.fillRect(x - base * 0.38, y - base * 1.45, base * 0.76, base * 1.42);
-    ctx.strokeStyle = "#6f5439";
-    ctx.lineWidth = Math.max(1, base * 0.035);
-    ctx.strokeRect(x - base * 0.34, y - base * 1.4, base * 0.68, base * 1.34);
-    ctx.fillStyle = gold;
-    ctx.beginPath();
-    ctx.arc(x + base * 0.22, y - base * 0.65, base * 0.035, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
+function isBlocked(x: number, y: number, radius = 0.28) {
+  const samples = [
+    [x - radius, y - radius],
+    [x + radius, y - radius],
+    [x - radius, y + radius],
+    [x + radius, y + radius],
+  ];
+  return samples.some(([sampleX, sampleY]) => isWall(sampleX, sampleY)) ||
+    hitsDungeonCollider(x, y, radius);
 }
 
-function renderWorld(
-  canvas: HTMLCanvasElement,
-  px: number,
-  py: number,
-  dir: number,
-  time: number,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const dpr = Math.min(1.45, window.devicePixelRatio || 1);
-  const cw = Math.max(480, Math.floor(canvas.clientWidth * dpr));
-  const ch = Math.max(300, Math.floor(canvas.clientHeight * dpr));
-  if (canvas.width !== cw || canvas.height !== ch) {
-    canvas.width = cw;
-    canvas.height = ch;
+function initialPlayer() {
+  if (typeof window !== "undefined") {
+    const start = new URLSearchParams(window.location.search).get("start");
+    if (start === "tribunal") return { x: 19.6, y: 11.35, dir: -2.02, pitch: 0.08 };
+    if (start === "tribunal-north") return { x: 19.7, y: 4.8, dir: 1.82, pitch: 0.02 };
+    if (start === "office") return { x: 7.25, y: 21.25, dir: -2.28, pitch: 0.02 };
+    if (start === "cells") return { x: 30, y: 8, dir: Math.PI, pitch: 0 };
+    if (start === "vault") return { x: 19.5, y: 23.2, dir: -Math.PI / 2, pitch: 0 };
   }
-
-  const upper = ctx.createLinearGradient(0, 0, 0, ch * 0.55);
-  upper.addColorStop(0, "#0e0b0a");
-  upper.addColorStop(0.6, "#211610");
-  upper.addColorStop(1, "#49301e");
-  ctx.fillStyle = upper;
-  ctx.fillRect(0, 0, cw, ch / 2);
-  const floor = ctx.createLinearGradient(0, ch / 2, 0, ch);
-  floor.addColorStop(0, "#3b281b");
-  floor.addColorStop(1, "#100c09");
-  ctx.fillStyle = floor;
-  ctx.fillRect(0, ch / 2, cw, ch / 2);
-
-  const fov = Math.PI / 3;
-  const depthBuffer = new Float32Array(cw);
-  const step = Math.max(1, Math.floor(cw / 720));
-  for (let sx = 0; sx < cw; sx += step) {
-    const rayAngle = dir - fov / 2 + (sx / cw) * fov;
-    const rayX = Math.cos(rayAngle);
-    const rayY = Math.sin(rayAngle);
-    let mapX = Math.floor(px);
-    let mapY = Math.floor(py);
-    const deltaX = Math.abs(1 / (rayX || 0.0001));
-    const deltaY = Math.abs(1 / (rayY || 0.0001));
-    const stepX = rayX < 0 ? -1 : 1;
-    const stepY = rayY < 0 ? -1 : 1;
-    let sideX = rayX < 0 ? (px - mapX) * deltaX : (mapX + 1 - px) * deltaX;
-    let sideY = rayY < 0 ? (py - mapY) * deltaY : (mapY + 1 - py) * deltaY;
-    let side = 0;
-    let material = "1";
-    for (let i = 0; i < 64; i++) {
-      if (sideX < sideY) {
-        sideX += deltaX;
-        mapX += stepX;
-        side = 0;
-      } else {
-        sideY += deltaY;
-        mapY += stepY;
-        side = 1;
-      }
-      if (mapY < 0 || mapX < 0 || mapY >= H || mapX >= W) break;
-      if (WORLD[mapY][mapX] !== "0") {
-        material = WORLD[mapY][mapX];
-        break;
-      }
-    }
-    const rawDist =
-      side === 0
-        ? (mapX - px + (1 - stepX) / 2) / (rayX || 0.0001)
-        : (mapY - py + (1 - stepY) / 2) / (rayY || 0.0001);
-    const dist = Math.max(0.1, rawDist * Math.cos(rayAngle - dir));
-    for (let z = sx; z < Math.min(cw, sx + step); z++) depthBuffer[z] = dist;
-    const wallH = Math.min(ch * 1.8, ch / dist);
-    const top = (ch - wallH) / 2;
-    const wallXRaw = side === 0 ? py + rawDist * rayY : px + rawDist * rayX;
-    const tex = wallXRaw - Math.floor(wallXRaw);
-    const fog = Math.max(0.24, 1 - dist / 24);
-    let base = material === "2" ? [88, 50, 33] : material === "3" ? [78, 70, 59] : material === "4" ? [66, 48, 37] : [72, 62, 49];
-    const mortar = Math.sin(tex * Math.PI * 9) * 5;
-    const shade = (side ? 0.72 : 0.9) * fog;
-    ctx.fillStyle = `rgb(${base[0] * shade + mortar},${base[1] * shade + mortar},${base[2] * shade + mortar})`;
-    ctx.fillRect(sx, top, step + 1, wallH);
-    if (material === "2") {
-      ctx.fillStyle = `rgba(161,25,35,${0.9 * fog})`;
-      if (Math.abs(tex - 0.5) < 0.055) ctx.fillRect(sx, top + wallH * 0.24, step + 1, wallH * 0.48);
-      ctx.fillRect(sx, top + wallH * 0.44, step + 1, wallH * 0.105);
-      ctx.fillStyle = `rgba(9,5,4,${0.5 * fog})`;
-      ctx.fillRect(sx, top + wallH * 0.68, step + 1, wallH * 0.32);
-    }
-    if (material === "3" && (Math.floor(tex * 8) + mapY + mapX) % 5 === 0) {
-      ctx.fillStyle = `rgba(8,6,5,${0.45 * fog})`;
-      ctx.fillRect(sx, top + wallH * 0.08, step + 1, wallH * 0.68);
-    }
-    ctx.fillStyle = `rgba(0,0,0,${Math.min(0.62, dist / 30)})`;
-    ctx.fillRect(sx, top, step + 1, wallH);
-  }
-
-  [...props]
-    .sort((a, b) => Math.hypot(b.x - px, b.y - py) - Math.hypot(a.x - px, a.y - py))
-    .forEach((prop) => drawProp(ctx, prop, px, py, dir, cw, ch, depthBuffer));
-
-  const zone = roomName(px, py);
-  if (zone === "THE TRIBUNAL CHAMBER") {
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.font = `${Math.max(10, cw * 0.012)}px Georgia`;
-    ctx.fillStyle = "rgba(206,165,104,.68)";
-    ctx.fillText("MISERICORDIA  ET  JUSTITIA", cw / 2, ch * 0.18);
-    ctx.restore();
-  }
-
-  const lampFlicker = 0.94 + Math.sin(time / 137) * 0.025 + Math.sin(time / 79) * 0.018;
-  const glow = ctx.createRadialGradient(cw / 2, ch * 0.48, ch * 0.03, cw / 2, ch * 0.48, ch * 0.62);
-  glow.addColorStop(0, `rgba(238,157,72,${0.17 * lampFlicker})`);
-  glow.addColorStop(0.55, "rgba(90,44,19,.015)");
-  glow.addColorStop(1, "rgba(0,0,0,.48)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, cw, ch);
-
-  ctx.fillStyle = "rgba(227,200,155,.6)";
-  ctx.fillRect(cw / 2 - 1, ch / 2 - 7, 2, 14);
-  ctx.fillRect(cw / 2 - 7, ch / 2 - 1, 14, 2);
+  return { x: 5, y: 24.5, dir: -Math.PI / 2, pitch: 0 };
 }
 
 export default function InquisitionGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const player = useRef({ x: 5, y: 24.5, dir: -Math.PI / 2 });
+  const player = useRef(initialPlayer());
   const keys = useRef(new Set<string>());
-  const drag = useRef<number | null>(null);
+  const drag = useRef<{ x: number; y: number } | null>(null);
   const frame = useRef<number | null>(null);
   const last = useRef(0);
+  const lastViewUpdate = useRef(0);
   const [started, setStarted] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
@@ -570,7 +243,9 @@ export default function InquisitionGame() {
   const [found, setFound] = useState<string[]>([]);
   const [near, setNear] = useState<Discovery | null>(null);
   const [zone, setZone] = useState("THE PRISON GATE");
+  const [view, setView] = useState(initialPlayer);
   const [sound, setSound] = useState(true);
+  const [pointerLocked, setPointerLocked] = useState(false);
   const audioRef = useRef<AudioContext | null>(null);
 
   const foundSet = useMemo(() => new Set(found), [found]);
@@ -582,6 +257,7 @@ export default function InquisitionGame() {
   const interact = useCallback(() => {
     const d = nearestDiscovery(player.current.x, player.current.y);
     if (!d) return;
+    if (document.pointerLockElement) document.exitPointerLock();
     setActive(d);
     setFound((current) => (current.includes(d.id) ? current : [...current, d.id]));
   }, []);
@@ -592,8 +268,14 @@ export default function InquisitionGame() {
       keys.current.add(e.key.toLowerCase());
       if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) e.preventDefault();
       if (e.key.toLowerCase() === "e") interact();
-      if (e.key.toLowerCase() === "m") setMapOpen((v) => !v);
-      if (e.key.toLowerCase() === "j") setJournalOpen((v) => !v);
+      if (e.key.toLowerCase() === "m") {
+        if (document.pointerLockElement) document.exitPointerLock();
+        setMapOpen((v) => !v);
+      }
+      if (e.key.toLowerCase() === "j") {
+        if (document.pointerLockElement) document.exitPointerLock();
+        setJournalOpen((v) => !v);
+      }
       if (e.key === "Escape") {
         setActive(null);
         setJournalOpen(false);
@@ -613,6 +295,31 @@ export default function InquisitionGame() {
     if (!started) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const onPointerLockChange = () => {
+      setPointerLocked(document.pointerLockElement === canvas);
+    };
+    const onMouseMove = (event: MouseEvent) => {
+      if (document.pointerLockElement !== canvas) return;
+      player.current.dir += event.movementX * 0.0023;
+      player.current.pitch = Math.max(
+        -0.5,
+        Math.min(0.5, player.current.pitch - event.movementY * 0.002),
+      );
+    };
+    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("mousemove", onMouseMove);
+    return () => {
+      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("mousemove", onMouseMove);
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
+    };
+  }, [started]);
+
+  useEffect(() => {
+    if (!started) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dungeon = new DungeonRenderer(canvas, WORLD);
     const loop = (time: number) => {
       const dt = Math.min(0.04, (time - (last.current || time)) / 1000);
       last.current = time;
@@ -625,19 +332,23 @@ export default function InquisitionGame() {
       const speed = dt * 2.35;
       const nx = p.x + (Math.cos(p.dir) * move + Math.cos(p.dir + Math.PI / 2) * strafe) * speed;
       const ny = p.y + (Math.sin(p.dir) * move + Math.sin(p.dir + Math.PI / 2) * strafe) * speed;
-      const pad = 0.19;
-      if (!isWall(nx + Math.sign(nx - p.x) * pad, p.y)) p.x = nx;
-      if (!isWall(p.x, ny + Math.sign(ny - p.y) * pad)) p.y = ny;
-      renderWorld(canvas, p.x, p.y, p.dir, time);
+      if (!isBlocked(nx, p.y)) p.x = nx;
+      if (!isBlocked(p.x, ny)) p.y = ny;
+      dungeon.render(p, time);
       const d = nearestDiscovery(p.x, p.y);
       setNear((current) => (current?.id === d?.id ? current : d));
       const z = roomName(p.x, p.y);
       setZone((current) => (current === z ? current : z));
+      if (time - lastViewUpdate.current > 100) {
+        lastViewUpdate.current = time;
+        setView({ ...p });
+      }
       frame.current = requestAnimationFrame(loop);
     };
     frame.current = requestAnimationFrame(loop);
     return () => {
       if (frame.current) cancelAnimationFrame(frame.current);
+      dungeon.dispose();
     };
   }, [started]);
 
@@ -668,7 +379,7 @@ export default function InquisitionGame() {
       osc2.start();
       audioRef.current = ac;
     } catch {
-      setSound(false);
+      queueMicrotask(() => setSound(false));
     }
     return () => {
       audioRef.current?.close();
@@ -681,11 +392,11 @@ export default function InquisitionGame() {
     else keys.current.delete(key);
   };
 
-  const direction = ((player.current.dir * 180) / Math.PI + 450) % 360;
+  const direction = ((view.dir * 180) / Math.PI + 450) % 360;
   const compass = direction < 45 || direction >= 315 ? "N" : direction < 135 ? "E" : direction < 225 ? "S" : "W";
 
   return (
-    <main className="game-shell">
+    <main className={`game-shell${pointerLocked ? " pointer-locked" : ""}`}>
       {!started ? (
         <section className="intro">
           <div className="intro-grain" />
@@ -725,17 +436,36 @@ export default function InquisitionGame() {
             className="world"
             aria-label="First-person view of the Inquisition dungeon"
             onPointerDown={(e) => {
-              drag.current = e.clientX;
+              if (e.pointerType === "mouse") {
+                e.currentTarget.requestPointerLock();
+                return;
+              }
+              drag.current = { x: e.clientX, y: e.clientY };
               e.currentTarget.setPointerCapture(e.pointerId);
             }}
             onPointerMove={(e) => {
+              if (e.pointerType === "mouse") return;
               if (drag.current === null) return;
-              player.current.dir += (e.clientX - drag.current) * 0.004;
-              drag.current = e.clientX;
+              player.current.dir += (e.clientX - drag.current.x) * 0.004;
+              player.current.pitch = Math.max(
+                -0.5,
+                Math.min(0.5, player.current.pitch - (e.clientY - drag.current.y) * 0.003),
+              );
+              drag.current = { x: e.clientX, y: e.clientY };
             }}
             onPointerUp={() => (drag.current = null)}
           />
           <div className="vignette" />
+          <div className="crosshair" aria-hidden="true"><i /><b /></div>
+          {!pointerLocked && !active && !mapOpen && !journalOpen && !aboutOpen && (
+            <button
+              className="mouse-lock-prompt"
+              onClick={() => canvasRef.current?.requestPointerLock()}
+            >
+              CLICK TO CAPTURE MOUSE
+              <small>ESC TO RELEASE</small>
+            </button>
+          )}
           <header className="hud-top">
             <div className="seal">I</div>
             <div>
@@ -819,7 +549,7 @@ export default function InquisitionGame() {
             <button className="close" onClick={() => setMapOpen(false)} aria-label="Close">×</button>
             <p className="panel-kicker">PLAN OF THE SUBTERRANEAN OFFICES</p>
             <h2>The Prisoner’s Map</h2>
-            <DungeonMap x={player.current.x} y={player.current.y} dir={player.current.dir} found={foundSet} />
+            <DungeonMap x={view.x} y={view.y} dir={view.dir} found={foundSet} />
             <div className="map-legend">
               <span><i className="you" /> YOUR POSITION</span>
               <span><i className="seen" /> RECORDED</span>
