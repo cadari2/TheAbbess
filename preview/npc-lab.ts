@@ -164,6 +164,43 @@ Object.assign(window as unknown as Record<string, unknown>, {
     lampBulb.position.set(x, y, z);
     key.intensity = intensity;
   },
+  // Proportions, for judging a figure against a human canon rather than by eye.
+  // Widths are sampled as the union of every mesh's bounds crossing a height.
+  measure: () => {
+    if (!current) return null;
+    current.updateMatrixWorld(true);
+    const whole = new THREE.Box3().setFromObject(current);
+    const height = whole.max.y - whole.min.y;
+    const widthAt = (y: number) => {
+      let min = Infinity;
+      let max = -Infinity;
+      current!.traverse((item) => {
+        const part = item as THREE.Mesh;
+        if (!part.isMesh) return;
+        const box = new THREE.Box3().setFromObject(part);
+        if (y < box.min.y || y > box.max.y) return;
+        min = Math.min(min, box.min.x);
+        max = Math.max(max, box.max.x);
+      });
+      return max > min ? max - min : 0;
+    };
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    return {
+      height: round(height),
+      widths: Object.fromEntries(
+        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((f) => [
+          `${(f * 100).toFixed(0)}%`,
+          round(widthAt(whole.min.y + height * f)),
+        ]),
+      ),
+      ratios: Object.fromEntries(
+        [0.45, 0.5, 0.55, 0.6, 0.7, 0.75].map((f) => [
+          `w/h at ${(f * 100).toFixed(0)}%`,
+          round(widthAt(whole.min.y + height * f) / height),
+        ]),
+      ),
+    };
+  },
   stats: () => ({
     figure: figures[currentKey].label,
     meshes: meshCount,

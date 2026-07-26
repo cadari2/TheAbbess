@@ -480,8 +480,17 @@ type PersonOptions = {
 
 // Head radius before the per-axis skull scaling below. Faces, hoods, caps and
 // the neck are all sized from this so they stay locked together.
-const HEAD_RADIUS = 0.145;
+//
+// Measured against the reference figures, which stand 7.5 and 8.1 heads tall.
+// At 0.145 these figures were 5.7 heads — a head half again too large for the
+// body, which is most of what made them read as toys rather than as people. A
+// head is the unit everything else is judged against, so it has to be right
+// before any other proportion can be.
+const HEAD_RADIUS = 0.112;
 const HEAD_SCALE = new THREE.Vector3(0.84, 1.12, 0.9);
+const HEAD_HALF_HEIGHT = HEAD_RADIUS * HEAD_SCALE.y;
+const HEAD_HALF_WIDTH = HEAD_RADIUS * HEAD_SCALE.x;
+const HEAD_HALF_DEPTH = HEAD_RADIUS * HEAD_SCALE.z;
 // Horizontal half-angle of the textured face shell. Just past 80 degrees puts
 // the seam on the head's silhouette, where it is effectively invisible.
 const FACE_HALF_SPAN = 1.45;
@@ -536,9 +545,27 @@ const GARMENT_COLLAR_V = 0.82;
 // from these rather than carrying its own hand-tuned copy of them, because that
 // is how the arms and the yoke drifted out of agreement with the body in the
 // first place.
-const TORSO_TOP_RADIUS = 0.225;
-const TORSO_BOTTOM_RADIUS = 0.26;
+// Widest at the chest, narrowest at the waist. It used to be the other way
+// round — 0.225 at the top opening out to 0.26 at the bottom — so every figure
+// was a barrel that flared downwards, with no waist at all. Against the
+// reference figures these were close to twice as wide as they should be: their
+// waists measure 0.15 to 0.19 of standing height, where these measured 0.31.
+const TORSO_TOP_RADIUS = 0.168;
+const TORSO_BOTTOM_RADIUS = 0.14;
 const TORSO_SEGMENTS = 10;
+// Hips pick the waist back up below the belt; a human is not a cone from chest
+// to floor. Garment volumes below the waist start here.
+const HIP_RADIUS = 0.165;
+/**
+ * How deep the body is relative to how wide it is.
+ *
+ * A torso built as a prism around a circle is a tube, and reads as one however
+ * carefully it is tapered — which is why these figures still looked like
+ * barrels after their proportions were corrected. A human chest is roughly half
+ * again wider than it is deep. Flattening front to back is the difference
+ * between a person and a length of pipe.
+ */
+const BODY_DEPTH = 0.72;
 
 /**
  * The radius of the torso's *surface* at a given height.
@@ -660,6 +687,7 @@ function addGarmentVolume(
   position: [number, number, number],
   uvRange: [number, number],
   segments = 8,
+  depthScale = BODY_DEPTH,
 ) {
   const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments, 1);
   // Cylinder UVs start at +Z and run around, so u = 0.5 lands on -Z: the
@@ -667,6 +695,7 @@ function addGarmentVolume(
   remapUv(geometry, 0, 1, uvRange[0], uvRange[1]);
   const item = mesh(geometry, material);
   item.position.set(...position);
+  item.scale.z = depthScale;
   parent.add(item);
   return item;
 }
@@ -756,7 +785,11 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   const shoulderTopY = torsoY + torsoHeight / 2;
   const shoulderY = shoulderTopY - 0.06;
   const collarTopY = shoulderTopY + 0.15;
-  const headY = collarTopY + HEAD_RADIUS * HEAD_SCALE.y - 0.03;
+  // Set so a few centimetres of neck clear the collar. It used to sit low
+  // enough that the collar ring's top edge crossed above the chin and the head
+  // grew straight out of the shoulders, which is a large part of why these read
+  // as tin men: the reference figures all carry the head proud of the collar.
+  const headY = collarTopY + HEAD_HALF_HEIGHT - 0.014;
   // The belt line, needed before the lower body is built so each branch can
   // report how wide its skirt is where the belt has to pass over it.
   const beltY = torsoY - torsoHeight / 2;
@@ -775,40 +808,42 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   // themselves; nothing is a flat panel floating in front of the mesh.
   if (prisoner) {
     for (const side of [-1, 1]) {
-      const thighTop = new THREE.Vector3(side * 0.115, hipY, 0.01);
-      const knee = new THREE.Vector3(side * 0.125, seated ? 0.51 : 0.48, seated ? -0.24 : 0);
-      const ankle = new THREE.Vector3(side * 0.125, 0.15, seated ? -0.32 : 0);
-      addLimb(group, materials.prisonerCloth, thighTop, knee, 0.105, 0.09, 7);
-      addJoint(group, materials.prisonerCloth, knee, 0.088);
-      addLimb(group, materials.prisonerCloth, knee, ankle, 0.09, 0.065, 7);
-      addJoint(group, materials.darkLeather, ankle, 0.07);
+      const thighTop = new THREE.Vector3(side * 0.094, hipY, 0.01);
+      const knee = new THREE.Vector3(side * 0.098, seated ? 0.51 : 0.48, seated ? -0.24 : 0);
+      const ankle = new THREE.Vector3(side * 0.1, 0.15, seated ? -0.32 : 0);
+      addLimb(group, materials.prisonerCloth, thighTop, knee, 0.071, 0.054, 7);
+      addJoint(group, materials.prisonerCloth, knee, 0.056);
+      addLimb(group, materials.prisonerCloth, knee, ankle, 0.058, 0.043, 7);
+      addJoint(group, materials.darkLeather, ankle, 0.047);
       addBox(
         group,
         materials.darkLeather,
-        [0.17, 0.15, 0.28],
-        [side * 0.125, 0.085, seated ? -0.4 : -0.06],
+        [0.105, 0.1, 0.24],
+        [side * 0.1, 0.06, seated ? -0.4 : -0.05],
       );
     }
-    addGarmentVolume(group, garmentMaterial, 0.25, 0.29, 0.34, [0, hipY + 0.04, 0.015], [0, waistV]);
-    beltClears = Math.max(beltClears, coneRadiusAt(beltY, hipY + 0.04, 0.34, 0.25, 0.29));
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.208, 0.34, [0, hipY + 0.04, 0.015], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, hipY + 0.04, 0.34, HIP_RADIUS, 0.208));
   } else if (seated) {
-    addGarmentVolume(group, garmentMaterial, 0.235, 0.28, 0.32, [0, 0.81, 0.015], [0, waistV]);
-    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.81, 0.32, 0.235, 0.28));
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.222, 0.32, [0, 0.81, 0.015], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.81, 0.32, HIP_RADIUS, 0.222));
     for (const side of [-1, 1]) {
-      const thighTop = new THREE.Vector3(side * 0.12, hipY, 0);
-      const knee = new THREE.Vector3(side * 0.13, 0.5, -0.24);
-      const ankle = new THREE.Vector3(side * 0.13, 0.16, -0.31);
-      addLimb(group, robe, thighTop, knee, 0.095, 0.08, 7);
-      addJoint(group, robe, knee, 0.078);
-      addLimb(group, materials.darkLeather, knee, ankle, 0.075, 0.06, 7);
-      addJoint(group, materials.darkLeather, ankle, 0.065);
-      addBox(group, materials.darkLeather, [0.17, 0.14, 0.27], [side * 0.13, 0.09, -0.39]);
+      const thighTop = new THREE.Vector3(side * 0.098, hipY, 0);
+      const knee = new THREE.Vector3(side * 0.104, 0.5, -0.24);
+      const ankle = new THREE.Vector3(side * 0.104, 0.16, -0.31);
+      addLimb(group, robe, thighTop, knee, 0.073, 0.056, 7);
+      addJoint(group, robe, knee, 0.058);
+      addLimb(group, materials.darkLeather, knee, ankle, 0.056, 0.043, 7);
+      addJoint(group, materials.darkLeather, ankle, 0.046);
+      addBox(group, materials.darkLeather, [0.105, 0.1, 0.24], [side * 0.104, 0.06, -0.37]);
     }
   } else {
-    addGarmentVolume(group, garmentMaterial, 0.245, 0.34, 0.9, [0, 0.48, 0.025], [0, waistV], 10);
-    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.48, 0.9, 0.245, 0.34));
-    addBox(group, materials.darkLeather, [0.19, 0.1, 0.29], [-0.145, 0.055, -0.08]);
-    addBox(group, materials.darkLeather, [0.19, 0.1, 0.29], [0.145, 0.055, -0.08]);
+    // A robe falls from the hips and widens to the hem; it does not start at
+    // the waist as wide as the chest.
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.275, 0.9, [0, 0.48, 0.025], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.48, 0.9, HIP_RADIUS, 0.275));
+    addBox(group, materials.darkLeather, [0.115, 0.09, 0.25], [-0.102, 0.05, -0.07]);
+    addBox(group, materials.darkLeather, [0.115, 0.09, 0.25], [0.102, 0.05, -0.07]);
   }
 
   // Torso: one tapered volume carrying the garment texture, stopping below the
@@ -833,7 +868,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   addGarmentVolume(
     group,
     garmentMaterial,
-    0.155,
+    0.134,
     torsoRadiusAt(shoulderSlopeBottom, torsoY, torsoHeight) + 0.003,
     0.13,
     [0, shoulderSlopeBottom + 0.065, 0],
@@ -845,30 +880,28 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   addGarmentVolume(
     group,
     garmentMaterial,
-    0.105,
-    0.15,
+    0.082,
+    0.118,
     0.055,
-    [0, collarTopY - 0.045, 0],
+    [0, collarTopY - 0.055, 0],
     [GARMENT_COLLAR_V, 1],
     TORSO_SEGMENTS,
   );
-  // Sleeve heads, so the arms grow out of cloth instead of out of thin air.
+  // Shoulder caps, so the arms grow out of cloth instead of out of thin air.
+  // These were horizontal cylinders, which stuck out either side as hard
+  // angular tabs — pauldrons on a suit of armour rather than shoulders. A
+  // rounded cap is what the reference figures have: the silhouette runs neck,
+  // sloping trapezius, round deltoid, arm, with no corner anywhere along it.
   for (const side of [-1, 1]) {
-    const sleeve = addCylinder(
-      group,
-      garmentMaterial,
-      0.1,
-      0.118,
-      0.17,
-      [side * 0.208, shoulderTopY - 0.045, 0],
-      [0, 0, side * 0.26],
-      9,
-    );
-    // Confined to the same plain shoulder cloth the slope wears. addCylinder
-    // leaves default UVs spanning the sheet's whole height, which drew the pale
-    // collar band across each sleeve and put a bright wedge on both shoulders.
-    remapUv(sleeve.geometry, 0, 1, GARMENT_COLLAR_V - 0.1, GARMENT_COLLAR_V);
-    sleeve.castShadow = true;
+    const deltoid = mesh(new THREE.SphereGeometry(0.075, 8, 6), garmentMaterial);
+    // Confined to the same plain shoulder cloth the slope wears. Default UVs
+    // span the sheet's whole height, which drew the pale collar band across
+    // each shoulder as a bright wedge.
+    remapUv(deltoid.geometry, 0, 1, GARMENT_COLLAR_V - 0.1, GARMENT_COLLAR_V);
+    deltoid.position.set(side * 0.165, shoulderTopY - 0.062, 0);
+    deltoid.scale.set(1, 0.92, BODY_DEPTH / 0.72 * 0.86);
+    deltoid.castShadow = true;
+    group.add(deltoid);
   }
   // The belt follows the torso's ten-sided profile. It used to be a 0.48 x 0.31
   // box inside a prism of radius 0.247, so its four corners stood 39mm proud of
@@ -883,9 +916,18 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     [0, beltY, 0],
     [0, 0, 0],
     TORSO_SEGMENTS,
-  );
+  ).scale.setZ(BODY_DEPTH);
   // Neck bridges the collar opening and the underside of the skull.
-  addCylinder(group, skin, 0.062, 0.075, 0.2, [0, collarTopY - 0.03, 0.004], [0, 0, 0], 7);
+  addCylinder(
+    group,
+    skin,
+    HEAD_HALF_WIDTH * 0.5,
+    HEAD_HALF_WIDTH * 0.62,
+    0.2,
+    [0, collarTopY - 0.03, 0.004],
+    [0, 0, 0],
+    7,
+  );
 
   const faceKey = options.face ?? (prisoner ? "young" : "mature");
   // Face and rear-of-head are always taken as a pair, so nobody wears one
@@ -929,14 +971,39 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     cowl.scale.set(HEAD_SCALE.x, HEAD_SCALE.y * 0.98, HEAD_SCALE.z);
     group.add(cowl);
     // A shallow brow band closes the top of the opening.
-    addCylinder(group, robe, 0.152, 0.156, 0.045, [0, headY + 0.108, 0.006], [0.28, 0, 0], 8);
-    // Cloth falling from the cowl onto the shoulders.
-    addCylinder(group, robe, 0.185, 0.3, 0.24, [0, shoulderY + 0.075, 0.006], [0, 0, 0], 10);
+    addCylinder(
+      group,
+      robe,
+      HEAD_RADIUS * 1.06,
+      HEAD_RADIUS * 1.09,
+      0.042,
+      [0, headY + HEAD_HALF_HEIGHT * 0.66, 0.006],
+      [0.28, 0, 0],
+      8,
+    );
+    // Cloth falling from the cowl onto the shoulders. Sized off the torso it
+    // lands on; at 0.3 it stood 8cm proud of the body as a hard flared bell.
+    addCylinder(
+      group,
+      robe,
+      0.145,
+      torsoRadiusAt(shoulderY, torsoY, torsoHeight) + 0.05,
+      0.24,
+      [0, shoulderY + 0.075, 0.006],
+      [0, 0, 0],
+      TORSO_SEGMENTS,
+    );
   }
 
   if (options.masked) {
-    addBox(group, materials.eyeSocket, [0.036, 0.014, 0.01], [-0.045, headY + 0.025, -0.126]);
-    addBox(group, materials.eyeSocket, [0.036, 0.014, 0.01], [0.045, headY + 0.025, -0.126]);
+    for (const side of [-1, 1]) {
+      addBox(
+        group,
+        materials.eyeSocket,
+        [HEAD_HALF_WIDTH * 0.37, 0.013, 0.01],
+        [side * HEAD_HALF_WIDTH * 0.46, headY + HEAD_HALF_HEIGHT * 0.15, -HEAD_HALF_DEPTH * 0.97],
+      );
+    }
   }
 
   // Arms start inside the torso volume and carry joint caps at shoulder and
@@ -951,61 +1018,75 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     // to roughly the depth of the wrists keeps the whole span proud of the
     // cloth. It also brings the forearms back to 28cm from the 40cm they needed
     // to reach across the body.
-    const leftShoulder = new THREE.Vector3(-0.21, shoulderY - 0.02, -0.01);
-    const rightShoulder = new THREE.Vector3(0.21, shoulderY - 0.02, -0.01);
-    const leftElbow = new THREE.Vector3(-0.2, torsoY - 0.06, -0.16);
-    const rightElbow = new THREE.Vector3(0.2, torsoY - 0.075, -0.165);
-    const leftWrist = new THREE.Vector3(0.03, torsoY - 0.165, -0.262);
-    const rightWrist = new THREE.Vector3(-0.03, torsoY - 0.195, -0.29);
+    const leftShoulder = new THREE.Vector3(-0.186, shoulderY - 0.02, -0.01);
+    const rightShoulder = new THREE.Vector3(0.186, shoulderY - 0.02, -0.01);
+    const leftElbow = new THREE.Vector3(-0.178, torsoY - 0.07, -0.145);
+    const rightElbow = new THREE.Vector3(0.178, torsoY - 0.085, -0.15);
+    const leftWrist = new THREE.Vector3(0.028, torsoY - 0.175, -0.222);
+    const rightWrist = new THREE.Vector3(-0.028, torsoY - 0.205, -0.246);
     for (const [shoulder, elbow, wrist] of [
       [leftShoulder, leftElbow, leftWrist],
       [rightShoulder, rightElbow, rightWrist],
     ]) {
-      addJoint(group, skin, shoulder, 0.068);
-      addLimb(group, skin, shoulder, elbow, 0.062, 0.052);
-      addJoint(group, skin, elbow, 0.055);
-      addLimb(group, skin, elbow, wrist, 0.052, 0.043);
+      addJoint(group, skin, shoulder, 0.05);
+      addLimb(group, skin, shoulder, elbow, 0.045, 0.037);
+      addJoint(group, skin, elbow, 0.039);
+      addLimb(group, skin, elbow, wrist, 0.037, 0.03);
       // The first fifth of the upper arm is meant to be inside the chest.
-      checkLimbClearance("prisoner upper arm", shoulder, elbow, 0.062, 0.052, torsoY, torsoHeight, 0.2);
-      checkLimbClearance("prisoner forearm", elbow, wrist, 0.052, 0.043, torsoY, torsoHeight);
-      const hand = mesh(new THREE.SphereGeometry(0.052, 6, 5), skin);
+      checkLimbClearance("prisoner upper arm", shoulder, elbow, 0.045, 0.037, torsoY, torsoHeight, 0.2);
+      checkLimbClearance("prisoner forearm", elbow, wrist, 0.037, 0.03, torsoY, torsoHeight);
+      // Hands are longer than they are wide and flattened front to back, so a
+      // wrist ends in something with a back and a palm rather than in a ball.
+      const hand = mesh(new THREE.SphereGeometry(0.043, 6, 5), skin);
       hand.position.copy(wrist);
-      hand.scale.set(0.72, 1, 0.5);
+      hand.scale.set(0.62, 1.25, 0.45);
       group.add(hand);
     }
   } else {
     for (const side of [-1, 1]) {
-      const shoulder = new THREE.Vector3(side * 0.22, shoulderY - 0.015, 0);
+      const shoulder = new THREE.Vector3(side * 0.19, shoulderY - 0.015, 0);
       const elbow = seated
-        ? new THREE.Vector3(side * 0.29, 1.08, -0.07)
-        : new THREE.Vector3(side * 0.29, 1.08, 0.01);
+        ? new THREE.Vector3(side * 0.222, 1.08, -0.07)
+        : new THREE.Vector3(side * 0.218, 1.06, 0.01);
       const wrist = seated
-        ? new THREE.Vector3(side * 0.18, 0.91, -0.34)
-        : new THREE.Vector3(side * 0.26, 0.76, -0.03);
-      addJoint(group, robe, shoulder, 0.098);
-      addLimb(group, robe, shoulder, elbow, 0.095, 0.077, 10);
-      addJoint(group, robe, elbow, 0.079);
-      addLimb(group, robe, elbow, wrist, 0.077, 0.06, 10);
+        ? new THREE.Vector3(side * 0.158, 0.91, -0.32)
+        : new THREE.Vector3(side * 0.206, 0.74, -0.03);
+      addJoint(group, robe, shoulder, 0.064);
+      addLimb(group, robe, shoulder, elbow, 0.061, 0.05, 10);
+      addJoint(group, robe, elbow, 0.052);
+      addLimb(group, robe, elbow, wrist, 0.05, 0.04, 10);
       const pose = seated ? "seated" : "standing";
-      checkLimbClearance(`${pose} upper arm`, shoulder, elbow, 0.095, 0.077, torsoY, torsoHeight, 0.2);
-      checkLimbClearance(`${pose} forearm`, elbow, wrist, 0.077, 0.06, torsoY, torsoHeight);
-      const hand = mesh(new THREE.SphereGeometry(0.05, 6, 5), skin);
+      checkLimbClearance(`${pose} upper arm`, shoulder, elbow, 0.061, 0.05, torsoY, torsoHeight, 0.2);
+      checkLimbClearance(`${pose} forearm`, elbow, wrist, 0.05, 0.04, torsoY, torsoHeight);
+      const hand = mesh(new THREE.SphereGeometry(0.042, 6, 5), skin);
       hand.position.copy(wrist);
-      hand.scale.set(0.72, 1, 0.5);
+      hand.scale.set(0.62, 1.25, 0.45);
       group.add(hand);
     }
   }
 
   if (options.cap) {
-    addBox(group, materials.blackCloth, [0.31, 0.045, 0.29], [0, headY + 0.16, 0.004]);
-    addBox(group, materials.blackCloth, [0.225, 0.08, 0.215], [0, headY + 0.122, 0.004]);
+    // Sized and placed off the head rather than in absolute metres, so a change
+    // to head size cannot leave the cap hovering above it or sunk into it.
+    addBox(
+      group,
+      materials.blackCloth,
+      [HEAD_HALF_WIDTH * 2.55, 0.042, HEAD_HALF_DEPTH * 2.22],
+      [0, headY + HEAD_HALF_HEIGHT * 0.98, 0.004],
+    );
+    addBox(
+      group,
+      materials.blackCloth,
+      [HEAD_HALF_WIDTH * 1.85, 0.075, HEAD_HALF_DEPTH * 1.65],
+      [0, headY + HEAD_HALF_HEIGHT * 0.75, 0.004],
+    );
     const tassel = addCylinder(
       group,
       options.crimsonTassel ? materials.redSilkFaceted : materials.blackCloth,
       0.018,
       0.021,
       0.16,
-      [0.145, headY + 0.08, 0.015],
+      [HEAD_HALF_WIDTH * 1.2, headY + HEAD_HALF_HEIGHT * 0.5, 0.015],
       [0, 0, 0.2],
       6,
     );
@@ -1015,8 +1096,15 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   if (!options.prisoner && !options.hood) {
     // Clerical bands at the throat, tucked against the neck rather than
     // hovering in front of it.
-    addBox(group, materials.paperFaceted, [0.052, 0.115, 0.02], [-0.032, headY - 0.215, -0.066], [0.12, 0, 0.07]);
-    addBox(group, materials.paperFaceted, [0.052, 0.115, 0.02], [0.032, headY - 0.215, -0.066], [0.12, 0, -0.07]);
+    for (const side of [-1, 1]) {
+      addBox(
+        group,
+        materials.paperFaceted,
+        [0.042, 0.095, 0.018],
+        [side * 0.026, collarTopY - 0.085, -0.058],
+        [0.12, 0, side * -0.07],
+      );
+    }
   }
 
   if (options.cross) {
