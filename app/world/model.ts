@@ -63,6 +63,71 @@ export type Opening = {
 };
 
 /**
+ * Masonry replaced by an iron screen: bars in a stone frame.
+ *
+ * The cell fronts. Collision treats a screen exactly as the wall it replaces —
+ * the grid is untouched — but sight and sound pass through it, and the renderer
+ * draws bars instead of instancing a stone block. That combination is the whole
+ * point of a cell: the prisoner is visible and audible from the corridor and
+ * cannot leave it.
+ */
+export type Screen = {
+  id: string;
+  /** The room whose front this is, for the renderer's material choice. */
+  room: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
+/**
+ * A run of steps, described once and used by three consumers.
+ *
+ * The stair geometry, the height the player's eye rides at, and the height any
+ * figure standing on it is drawn at all read this. Before it, the moon stair was
+ * decoration: eight boxes drawn on a flat floor that the player walked straight
+ * through without rising, so the "hidden stair" could be crossed but never
+ * climbed.
+ *
+ * Height is quantised to the tread, so the surface the player stands on is the
+ * surface they can see, rather than a ramp hidden under drawn steps.
+ */
+export type Stair = {
+  id: string;
+  room: string;
+  /** Footprint in world units, not cells. */
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** The axis the treads climb along. */
+  axis: "x" | "y";
+  /** Height at the low edge (`x1`/`y1`) and at the high edge (`x2`/`y2`). */
+  from: number;
+  to: number;
+  /** Number of treads. Rise per tread is `(to - from) / treads`. */
+  treads: number;
+};
+
+/**
+ * A floor at a fixed height: the landing a stair arrives at.
+ *
+ * Kept separate from `Stair` rather than modelled as a stair of zero rise, so a
+ * landing cannot be given treads by accident and the renderer has nothing to
+ * draw for one but a slab.
+ */
+export type Landing = {
+  id: string;
+  room: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  height: number;
+};
+
+/**
  * One step of the build, applied in order.
  *
  * Order is load-bearing and destructive: a room laid after an opening will pave
@@ -73,7 +138,10 @@ export type Opening = {
  */
 export type PlanStep =
   | { op: "room"; room: Room }
-  | { op: "open"; opening: Opening };
+  | { op: "open"; opening: Opening }
+  | { op: "screen"; screen: Screen }
+  | { op: "stair"; stair: Stair }
+  | { op: "landing"; landing: Landing };
 
 export type Grid = string[][];
 
@@ -105,4 +173,8 @@ export type DerivedWorld = {
   regions: readonly (Extent & { id: string; name: string })[];
   /** Openings destroyed by a later plan step. Empty in a healthy plan. */
   sealed: readonly SealedOpening[];
+  /** Masonry drawn as bars: solid to the body, open to sight and sound. */
+  screens: readonly Screen[];
+  stairs: readonly Stair[];
+  landings: readonly Landing[];
 };

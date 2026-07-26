@@ -12,15 +12,31 @@ export {
   derivePlan,
   floorExtent,
   gridToText,
+  groundHeightAt,
   hasLineOfSight,
+  isScreenAt,
   isWallAt,
   misconnectedOpenings,
   orphanedCells,
   reachableCells,
   routeMasonryBreaches,
   roomNameAt,
+  treadsOf,
 } from "./derive.ts";
-export { PLAN, REOPENED_BY_ORDER_FIX, SPAWN, WORLD_HEIGHT, WORLD_WIDTH } from "./plan.ts";
+export { PLAN, SPAWN, WORLD_HEIGHT, WORLD_WIDTH } from "./plan.ts";
+export {
+  NPC_RADIUS,
+  createNpcStates,
+  routeObstructions,
+  turnToward,
+  updateNpcs,
+  type NpcDefinition,
+  type NpcPhase,
+  type NpcState,
+  type RouteNode,
+} from "./npcs.ts";
+export { NPCS } from "./roster.ts";
+export { EARSHOT, overheardAt, type Overheard } from "./earshot.ts";
 export { DISCOVERIES, misplacedDiscoveries, type Discovery } from "./discoveries.ts";
 export {
   DUNGEON_COLLIDERS,

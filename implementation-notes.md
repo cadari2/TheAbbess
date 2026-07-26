@@ -135,6 +135,117 @@ and collision is settled deterministically in `world-model.test.mjs` instead. On
 manual long-hold traverse was run to confirm the gate doorway is passable in the
 real browser.
 
+## Stage B — the inhabitants, and eight reported defects
+
+Stage B was the NPC simulation. It arrived alongside eight defects reported from
+play, most of which are not NPC work at all; they are implemented here rather
+than deferred, and the ones that reach into later stages are logged below.
+
+### The simulation
+
+| Module | Holds |
+| --- | --- |
+| `npcs.ts` | Route nodes, figure state, the fixed-step advance, route validation |
+| `roster.ts` | Who walks the building and the rounds they walk |
+| `earshot.ts` | What is audible from a position, resolved outside the simulation |
+
+Patrols were previously `npcPosition(npc, timeMs)` — closed-form, stateless, and
+therefore incapable of ever pausing, because a pause is a fact about what has
+happened rather than about what time it is. Figures are now advanced by
+`updateNpcs(states, definitions, dtMs)` through `walk → turn → dwell → speak`,
+and a route node carries how long to stand, which way to face while standing,
+and what is said on arrival.
+
+**The simulation is never given the player.** `updateNpcs` takes no player
+argument and `npcs.ts` contains no reference to one outside its own comments,
+which the suite asserts against the stripped source. The agreed premise — she is
+never noticed, never challenged, never stopped — is therefore not a rule anyone
+has to remember. Overhearing is resolved in `earshot.ts` from a read-only view of
+NPC state, so a line is spoken whether or not she is there, and she walks into
+and out of it.
+
+Three prisoners were added as figures with rounds of two paces and long
+stillnesses. A cell with someone motionless in it reads as a diorama.
+
+### The eight reported defects
+
+1. **Every figure walked backwards.** The model faces −Z; rotating it by *t*
+   sends that to (−sin *t*, −cos *t*), so matching a heading needs
+   `-PI/2 - dir`. It was `+PI/2 - dir` — the same angle turned through half a
+   circle. Every patrol in the building had walked backwards since patrols were
+   added.
+2. **Rounds crossed furniture.** Routes were validated against masonry only, so
+   the gaoler walked the length of his prisoner's pallet. `routeObstructions`
+   now checks props too, at the figure's own girth, and every round is
+   re-authored against the replanned building.
+3. **Figures read as tin men.** Three causes, all fixed: shading was flat by
+   design (one normal per triangle, from screen-space derivatives), which turns
+   a body of tapered prisms into sheet metal; tessellation was low enough that
+   silhouettes showed their corners; and robed figures **had no legs at all** —
+   a floor-length cone with two leather boxes lying on the flagstones under it.
+   Shading is now smooth, counts are up, and every figure has a thigh, a shin,
+   an ankle and a shaped foot, with the hem stopped above it so the walk is
+   visible. Limbs are built inside hip and shoulder pivots and swung by
+   `animateWalk`, with **cadence taken from distance travelled rather than from
+   the clock** — which is what keeps a foot planted and stops the walk-on-the-
+   spot when a figure pauses.
+4. **Scenery floated.** The torture chamber's pulley hung in mid-air; its two
+   iron rods stopped half a metre short of the vault *and* half a metre above
+   the floor, with the manacle rings threaded onto them. Rather than nudge them,
+   `auditFloatingProps` now walks the scene at boot and reports anything that
+   does not reach the floor, reach the vault, meet masonry, or rest on something
+   that does. It found the rest, and the walkthrough asserts a clean boot.
+5. **The hidden stair could not be climbed.** The treads were eight boxes drawn
+   on a flat floor. `Stair` and `Landing` are now plan entities: the renderer
+   builds the treads from them and the player's eye rides `groundHeightAt`, so
+   the step seen is the step stood on. The doorway was also moved off the middle
+   of the flight, where it had stepped the player a metre into the air.
+6. **The press stood across its own doorway**, leaving 0.50 of gap where the
+   player is 0.56 across — so the wardrobe room, a room about a disguise, could
+   only be entered the long way round through the vault. Moved to the south
+   wall, and every opening is now measured at its narrowest by the suite.
+7. **The cells were rooms.** Two 5×5 chambers with solid doors, each larger than
+   the tribunal's dais. They are now three small cells off one gaoler's
+   corridor, reached down a four-metre bore through the rock, and fronted with
+   **iron screens rather than masonry**: a new plan entity that is solid to the
+   body and transparent to sight and sound, so a prisoner is visible and audible
+   from the corridor and cannot leave. Lamps are in the corridor only, so the
+   light inside a cell is barred light.
+8. **Bendetta's wall was a hung picture** — an opaque panel in a chestnut frame.
+   It is now painted with a transparent ground so the masonry shows through
+   everywhere the pigment does not reach, drawn in soot and ochre with strokes
+   that waver and do not close, scraped away in the middle as the text has it,
+   and cut into the stone below with real scratch relief. The frame is gone.
+
+Also found and fixed while working: the masked official existed twice, once as a
+static figure and once as the patrol that walks his post, so the same man stood
+in two places at once; and the wardrobe's hanging habits were three calls to
+`makePerson`, which was survivable while a robed figure was a cone and became
+grotesque the moment robed figures acquired faces and legs.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` | clean in `app/` and `preview/`; the 3 pre-existing `db/`+`worker/` errors are unchanged |
+| `pnpm lint` | clean |
+| `pnpm test` | 26/26 pass (was 18/18) |
+| `node tests/walkthrough.mjs` | see below |
+| Visual review | screenshots of the cell range, Bendetta's wall, the moon stair, the wardrobe, the tribunal and the outer office |
+
+**Verified by execution:** every round is unobstructed by masonry *and* props at
+the figure's girth; two minutes of simulation never puts a figure in a wall;
+every authored line is reached by its round; a figure accrues no stride distance
+while standing; voices carry through iron and not through stone; the moon stair
+rises monotonically and its doorway opens on level floor; every opening is
+passable at its narrowest; the scene boots with nothing floating and nothing
+unbacked.
+
+**Not verified by execution:** that the walk *looks* right. Stride length,
+cadence and swing amplitude are judged from stills, and headless software WebGL
+runs this scene at about 1fps, so no scripted check watches a figure walk. The
+same limits as Stage A apply to mouse-look feel, audio mix, and touch.
+
 ## Deviations
 
 Deviations from the agreed plan, with reasoning. Where an edge case forced a
@@ -180,3 +291,43 @@ Not in the plan, and it adds a dependency. It is the only way to make any claim
 about the running game rather than about its source, and the browser it drives is
 already present in the environment. `tests/walkthrough.mjs` is deliberately kept
 out of `pnpm test`, since it needs a running dev server.
+
+### B1. Five of the eight reported defects belong to later stages
+
+Layout, lighting, environmental storytelling and the cell range are Stages D and
+F. Items 4 through 8 above are all of that kind, and Stage B was to be the NPC
+core only.
+
+They are done here because they were reported from play and because deferring
+them would have made Stage B unverifiable in the places it matters most: the
+gaoler's round is the round past the cells, and there was no point authoring it
+against a cell block that was about to be replanned. The conservative element is
+that each is the narrowest change that answers the report — the layout revision
+is confined to the cell range and the stair chamber, and the loops, service
+circulation and compression-release work of Stage D is untouched.
+
+### B2. The shipped-grid fixture was retired
+
+Stage A pinned the derived grid against the grid the game originally shipped,
+with the ten differing cells enumerated. That comparison stopped being
+meaningful once the cell range was deliberately replanned: keeping it would have
+meant asserting that the layout must stay as it was. It is replaced by
+`tests/fixtures/plan-grid.txt`, a snapshot of the current derived grid,
+regenerated deliberately whenever the plan is revised. Drift is still caught;
+the baseline is now the plan rather than the first release.
+
+### B3. Character shading was changed from flat to smooth
+
+The flat-shading path was argued for at length in the source: one normal per
+triangle, on the grounds that faceting reads as carved. It does not read as
+carved on a body assembled from tapered prisms, and the figures were reported as
+robots. The lighting model is otherwise untouched — same wrapped Lambert, same
+flat fill, same absence of any specular lobe — so this is a change of normal
+only, from per-facet to interpolated.
+
+### B4. Earshot was shortened after tuning
+
+Set at 7.5 metres on the reasoning that too short is worse than too long. In
+play that carried the outer office's lines into the wardrobe room through an
+open door, which reads as a voice following the player rather than as
+overhearing. Reduced to 5.6.

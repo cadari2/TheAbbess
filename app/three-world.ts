@@ -1,5 +1,14 @@
 import * as THREE from "three";
-import { NPCS, npcPosition } from "./world-data";
+import {
+  NPCS,
+  WORLD_MODEL,
+  createNpcStates,
+  groundHeightAt,
+  isScreenAt,
+  treadsOf,
+  updateNpcs,
+  type NpcState,
+} from "./world/index.ts";
 
 export type PlayerView = {
   x: number;
@@ -52,6 +61,7 @@ const CHARACTER_WRAP = 0.28;
 
 const CHARACTER_VERTEX = /* glsl */ `
   varying vec3 vViewPosition;
+  varying vec3 vCharNormal;
   #ifdef CHAR_MAP
     varying vec2 vCharUv;
   #endif
@@ -63,9 +73,8 @@ const CHARACTER_VERTEX = /* glsl */ `
     #ifdef CHAR_MAP
       vCharUv = uv;
     #endif
+    vCharNormal = normalize( normalMatrix * normal );
     vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-    // Negated to match the convention Three's own flat-shading path expects, so
-    // the cross product below yields an outward normal.
     vViewPosition = - mvPosition.xyz;
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -83,6 +92,14 @@ const CHARACTER_VERTEX = /* glsl */ `
  * neither is reachable from roughness or metalness, so no combination of
  * material properties removes the sheen. Leaving the standard material behind
  * is the only way to be rid of it.
+ *
+ * Shading is smooth. It was flat — one normal per triangle, taken from the
+ * derivatives of view position — on the argument that faceting reads as carved.
+ * On a body assembled from tapered prisms it does not: every limb becomes a run
+ * of hard-edged plates and the figure reads as sheet metal, which is exactly the
+ * tin man these were reported as. The lighting model is unchanged; only the
+ * normal is, from per-facet to the interpolated vertex normal, so curved volumes
+ * shade as curves.
  *
  * Normalisation deliberately mirrors Three's: irradiance is accumulated as
  * colour x attenuation x N.L exactly as lights_physical does, then multiplied
@@ -102,6 +119,7 @@ const CHARACTER_FRAGMENT = /* glsl */ `
   #endif
 
   varying vec3 vViewPosition;
+  varying vec3 vCharNormal;
 
   #include <common>
   #include <lights_pars_begin>
@@ -129,12 +147,11 @@ const CHARACTER_FRAGMENT = /* glsl */ `
     // lifts off black and anything already bright stays put.
     albedo.rgb = lift + albedo.rgb * ( 1.0 - lift );
 
-    // One normal per triangle, taken from the derivatives of view position
-    // rather than from the interpolated normal attribute. Every facet resolves
-    // as its own plane; the geometry and its uploaded normals are untouched.
-    vec3 fdx = dFdx( vViewPosition );
-    vec3 fdy = dFdy( vViewPosition );
-    vec3 normal = normalize( cross( fdx, fdy ) );
+    // The interpolated vertex normal, flipped to face the viewer so a volume
+    // seen from inside — the far wall of a cowl, the underside of a hem — is not
+    // lit as though its back were its front.
+    vec3 normal = normalize( vCharNormal );
+    if ( ! gl_FrontFacing ) normal = - normal;
 
     vec3 irradiance = fill;
 
@@ -267,7 +284,7 @@ function addLimb(
   end: THREE.Vector3,
   radiusStart: number,
   radiusEnd = radiusStart,
-  segments = 9,
+  segments = 14,
 ) {
   const direction = end.clone().sub(start);
   const length = direction.length();
@@ -342,10 +359,65 @@ function addJoint(
   at: THREE.Vector3,
   radius: number,
 ) {
-  const item = mesh(new THREE.SphereGeometry(radius, 6, 4), material);
+  const item = mesh(new THREE.SphereGeometry(radius, 12, 9), material);
   item.position.copy(at);
   parent.add(item);
   return item;
+}
+
+/**
+ * A foot: heel, instep and a spread forefoot, pointing along -Z with the body.
+ *
+ * These were boxes — 105 x 100 x 240mm slabs lying on the floor beneath a robe,
+ * with no leg above them. A rectangular block is the single loudest tin-man cue
+ * available on a figure, because a real foot has no vertical face anywhere on
+ * it, and a foot with no ankle above it cannot be shown to be taking a step.
+ */
+function addFoot(
+  parent: THREE.Object3D,
+  material: THREE.Material,
+  at: THREE.Vector3,
+) {
+  const foot = new THREE.Group();
+  foot.position.copy(at);
+
+  const heel = mesh(new THREE.SphereGeometry(0.052, 12, 9), material);
+  heel.position.set(0, 0.05, 0.032);
+  heel.scale.set(0.9, 0.86, 1);
+  foot.add(heel);
+
+  // The instep slopes from under the ankle down towards the ball.
+  const instep = mesh(new THREE.SphereGeometry(0.05, 12, 9), material);
+  instep.position.set(0, 0.044, -0.05);
+  instep.scale.set(1.02, 0.8, 1.55);
+  foot.add(instep);
+
+  // Wider and flatter than the heel, with the toe rounded off rather than cut.
+  const fore = mesh(new THREE.SphereGeometry(0.045, 12, 9), material);
+  fore.position.set(0, 0.034, -0.13);
+  fore.scale.set(1.2, 0.7, 1.4);
+  foot.add(fore);
+
+  parent.add(foot);
+  return foot;
+}
+
+/**
+ * A joint the renderer can rotate: a hip or a shoulder.
+ *
+ * The body has no skeleton and no skinning, so a limb can only swing if it is
+ * built inside its own group with its origin at the joint. `local` rebases a
+ * point authored in body space into that group, which keeps the limb numbers
+ * readable as body measurements rather than as offsets from a pivot.
+ */
+function makePivot(parent: THREE.Object3D, at: THREE.Vector3) {
+  const pivot = new THREE.Group();
+  pivot.position.copy(at);
+  parent.add(pivot);
+  return {
+    pivot,
+    local: (point: THREE.Vector3) => point.clone().sub(at),
+  };
 }
 
 function makeCanvasTexture(
@@ -511,7 +583,10 @@ const GARMENT_COLLAR_V = 0.82;
 // waists measure 0.15 to 0.19 of standing height, where these measured 0.31.
 const TORSO_TOP_RADIUS = 0.168;
 const TORSO_BOTTOM_RADIUS = 0.14;
-const TORSO_SEGMENTS = 10;
+// Raised from 10. At ten sides a shoulder is a decagon, and with the shading
+// now smooth rather than faceted the silhouette is what gives the polygon count
+// away: a torso seen against a lit wall showed its corners.
+const TORSO_SEGMENTS = 16;
 // Hips pick the waist back up below the belt; a human is not a cone from chest
 // to floor. Garment volumes below the waist start here.
 const HIP_RADIUS = 0.165;
@@ -673,18 +748,16 @@ function makeHead(
 ) {
   const head = new THREE.Group();
 
-  // Segment counts are held close to the body's. The limbs and garment volumes
-  // run 7-10 radial segments; a head at 18 gave the face facets a quarter the
-  // area of the ones on the arm beside it, so the head read as a smooth object
-  // that had been pasted onto a faceted one. Matching the two is what makes a
-  // figure read as a single carved thing.
-  const skull = mesh(new THREE.SphereGeometry(HEAD_RADIUS, 10, 8), skin);
+  // Segment counts are held close to the body's, so no part of a figure reads as
+  // a smooth object pasted onto a coarse one. Both have risen together now that
+  // shading is smooth: at the old counts a head was a visibly ten-sided ball.
+  const skull = mesh(new THREE.SphereGeometry(HEAD_RADIUS, 22, 16), skin);
   head.add(skull);
 
   const faceShell = new THREE.SphereGeometry(
     HEAD_RADIUS * 1.006,
-    12,
-    9,
+    26,
+    18,
     -Math.PI / 2 - FACE_HALF_SPAN,
     FACE_HALF_SPAN * 2,
     0.2,
@@ -705,8 +778,8 @@ function makeHead(
       projectRearUv(
         new THREE.SphereGeometry(
           HEAD_RADIUS * 1.012,
-          10,
-          7,
+          22,
+          15,
           rearStart,
           REAR_HALF_SPAN * 2,
           0,
@@ -765,21 +838,36 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
 
   // Lower body. The garment texture is mapped onto the body volumes
   // themselves; nothing is a flat panel floating in front of the mesh.
-  if (prisoner) {
+  //
+  // Standing figures are built leg-first, inside a pivot at each hip, so the
+  // renderer can swing them. Everything below is authored in body coordinates
+  // and rebased into the pivot by `local`, which keeps these readable as
+  // measurements off a body rather than as offsets from a joint.
+  const legPivots: THREE.Group[] = [];
+  const armPivots: THREE.Group[] = [];
+  if (prisoner && !seated) {
     for (const side of [-1, 1]) {
       const thighTop = new THREE.Vector3(side * 0.094, hipY, 0.01);
-      const knee = new THREE.Vector3(side * 0.098, seated ? 0.51 : 0.48, seated ? -0.24 : 0);
-      const ankle = new THREE.Vector3(side * 0.1, 0.15, seated ? -0.32 : 0);
-      addLimb(group, materials.prisonerCloth, thighTop, knee, 0.071, 0.054, 7);
-      addJoint(group, materials.prisonerCloth, knee, 0.056);
-      addLimb(group, materials.prisonerCloth, knee, ankle, 0.058, 0.043, 7);
-      addJoint(group, materials.darkLeather, ankle, 0.047);
-      addBox(
-        group,
-        materials.darkLeather,
-        [0.105, 0.1, 0.24],
-        [side * 0.1, 0.06, seated ? -0.4 : -0.05],
-      );
+      const knee = new THREE.Vector3(side * 0.098, 0.46, 0);
+      const ankle = new THREE.Vector3(side * 0.1, 0.11, 0);
+      const { pivot, local } = makePivot(group, thighTop);
+      legPivots.push(pivot);
+      addLimb(pivot, materials.prisonerCloth, local(thighTop), local(knee), 0.075, 0.058, 12);
+      addJoint(pivot, materials.prisonerCloth, local(knee), 0.058);
+      addLimb(pivot, materials.prisonerCloth, local(knee), local(ankle), 0.06, 0.045, 12);
+      addFoot(pivot, materials.darkLeather, local(new THREE.Vector3(side * 0.1, 0, -0.005)));
+    }
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.208, 0.34, [0, hipY + 0.04, 0.015], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, hipY + 0.04, 0.34, HIP_RADIUS, 0.208));
+  } else if (prisoner) {
+    for (const side of [-1, 1]) {
+      const thighTop = new THREE.Vector3(side * 0.094, hipY, 0.01);
+      const knee = new THREE.Vector3(side * 0.098, 0.51, -0.24);
+      const ankle = new THREE.Vector3(side * 0.1, 0.13, -0.32);
+      addLimb(group, materials.prisonerCloth, thighTop, knee, 0.075, 0.058, 12);
+      addJoint(group, materials.prisonerCloth, knee, 0.058);
+      addLimb(group, materials.prisonerCloth, knee, ankle, 0.06, 0.045, 12);
+      addFoot(group, materials.darkLeather, new THREE.Vector3(side * 0.1, 0, -0.36));
     }
     addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.208, 0.34, [0, hipY + 0.04, 0.015], [0, waistV], TORSO_SEGMENTS);
     beltClears = Math.max(beltClears, coneRadiusAt(beltY, hipY + 0.04, 0.34, HIP_RADIUS, 0.208));
@@ -789,20 +877,31 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     for (const side of [-1, 1]) {
       const thighTop = new THREE.Vector3(side * 0.098, hipY, 0);
       const knee = new THREE.Vector3(side * 0.104, 0.5, -0.24);
-      const ankle = new THREE.Vector3(side * 0.104, 0.16, -0.31);
-      addLimb(group, robe, thighTop, knee, 0.073, 0.056, 7);
-      addJoint(group, robe, knee, 0.058);
-      addLimb(group, materials.darkLeather, knee, ankle, 0.056, 0.043, 7);
-      addJoint(group, materials.darkLeather, ankle, 0.046);
-      addBox(group, materials.darkLeather, [0.105, 0.1, 0.24], [side * 0.104, 0.06, -0.37]);
+      const ankle = new THREE.Vector3(side * 0.104, 0.14, -0.31);
+      addLimb(group, robe, thighTop, knee, 0.077, 0.06, 12);
+      addJoint(group, robe, knee, 0.06);
+      addLimb(group, materials.darkLeather, knee, ankle, 0.06, 0.045, 12);
+      addFoot(group, materials.darkLeather, new THREE.Vector3(side * 0.104, 0, -0.35));
     }
   } else {
-    // A robe falls from the hips and widens to the hem; it does not start at
-    // the waist as wide as the chest.
-    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.275, 0.9, [0, 0.48, 0.025], [0, waistV], TORSO_SEGMENTS);
-    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.48, 0.9, HIP_RADIUS, 0.275));
-    addBox(group, materials.darkLeather, [0.115, 0.09, 0.25], [-0.102, 0.05, -0.07]);
-    addBox(group, materials.darkLeather, [0.115, 0.09, 0.25], [0.102, 0.05, -0.07]);
+    // A robe falls from the hips and widens to the hem, and stops above the
+    // ankle. It used to sweep the floor, which hid the entire lower body: there
+    // were no legs at all under it, only two leather boxes lying on the
+    // flagstones, and a figure whose feet never appear cannot be shown to be
+    // taking steps rather than sliding along on a base.
+    addGarmentVolume(group, garmentMaterial, HIP_RADIUS, 0.262, 0.72, [0, 0.56, 0.025], [0, waistV], TORSO_SEGMENTS);
+    beltClears = Math.max(beltClears, coneRadiusAt(beltY, 0.56, 0.72, HIP_RADIUS, 0.262));
+    for (const side of [-1, 1]) {
+      const thighTop = new THREE.Vector3(side * 0.09, hipY - 0.04, 0);
+      const knee = new THREE.Vector3(side * 0.096, 0.44, 0.005);
+      const ankle = new THREE.Vector3(side * 0.1, 0.1, 0);
+      const { pivot, local } = makePivot(group, thighTop);
+      legPivots.push(pivot);
+      addLimb(pivot, robe, local(thighTop), local(knee), 0.084, 0.064, 12);
+      addJoint(pivot, robe, local(knee), 0.064);
+      addLimb(pivot, materials.darkLeather, local(knee), local(ankle), 0.063, 0.047, 12);
+      addFoot(pivot, materials.darkLeather, local(new THREE.Vector3(side * 0.1, 0, -0.01)));
+    }
   }
 
   // Torso: one tapered volume carrying the garment texture, stopping below the
@@ -852,7 +951,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   // rounded cap is what the reference figures have: the silhouette runs neck,
   // sloping trapezius, round deltoid, arm, with no corner anywhere along it.
   for (const side of [-1, 1]) {
-    const deltoid = mesh(new THREE.SphereGeometry(0.075, 8, 6), garmentMaterial);
+    const deltoid = mesh(new THREE.SphereGeometry(0.075, 16, 12), garmentMaterial);
     // Confined to the same plain shoulder cloth the slope wears. Default UVs
     // span the sheet's whole height, which drew the pale collar band across
     // each shoulder as a bright wedge.
@@ -996,7 +1095,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
       checkLimbClearance("prisoner forearm", elbow, wrist, 0.037, 0.03, torsoY, torsoHeight);
       // Hands are longer than they are wide and flattened front to back, so a
       // wrist ends in something with a back and a palm rather than in a ball.
-      const hand = mesh(new THREE.SphereGeometry(0.043, 6, 5), skin);
+      const hand = mesh(new THREE.SphereGeometry(0.043, 12, 9), skin);
       hand.position.copy(wrist);
       hand.scale.set(0.62, 1.25, 0.45);
       group.add(hand);
@@ -1007,20 +1106,29 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
       const elbow = seated
         ? new THREE.Vector3(side * 0.222, 1.08, -0.07)
         : new THREE.Vector3(side * 0.218, 1.06, 0.01);
+      // Raised from 0.91, which is exactly the height of the tables these
+      // figures sit at, so a hand laid on the boards was half sunk into them.
       const wrist = seated
-        ? new THREE.Vector3(side * 0.158, 0.91, -0.32)
+        ? new THREE.Vector3(side * 0.158, 0.985, -0.32)
         : new THREE.Vector3(side * 0.206, 0.74, -0.03);
-      addJoint(group, robe, shoulder, 0.064);
-      addLimb(group, robe, shoulder, elbow, 0.061, 0.05, 10);
-      addJoint(group, robe, elbow, 0.052);
-      addLimb(group, robe, elbow, wrist, 0.05, 0.04, 10);
+      // Standing arms hang in a shoulder pivot so they can counter-swing against
+      // the legs; seated ones are posed and stay put.
+      const host = seated ? group : makePivot(group, shoulder).pivot;
+      const at = seated
+        ? (point: THREE.Vector3) => point
+        : (point: THREE.Vector3) => point.clone().sub(shoulder);
+      if (!seated) armPivots.push(host as THREE.Group);
+      addJoint(host, robe, at(shoulder), 0.064);
+      addLimb(host, robe, at(shoulder), at(elbow), 0.061, 0.05, 14);
+      addJoint(host, robe, at(elbow), 0.052);
+      addLimb(host, robe, at(elbow), at(wrist), 0.05, 0.04, 14);
       const pose = seated ? "seated" : "standing";
       checkLimbClearance(`${pose} upper arm`, shoulder, elbow, 0.061, 0.05, torsoY, torsoHeight, 0.2);
       checkLimbClearance(`${pose} forearm`, elbow, wrist, 0.05, 0.04, torsoY, torsoHeight);
-      const hand = mesh(new THREE.SphereGeometry(0.042, 6, 5), skin);
-      hand.position.copy(wrist);
+      const hand = mesh(new THREE.SphereGeometry(0.042, 12, 9), skin);
+      hand.position.copy(at(wrist));
       hand.scale.set(0.62, 1.25, 0.45);
-      group.add(hand);
+      host.add(hand);
     }
   }
 
@@ -1090,7 +1198,38 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   });
 
   group.scale.setScalar(scale);
+  // The rig the renderer animates. There is no skeleton and no skinning here —
+  // these are the hip and shoulder groups the limbs were built inside, and a
+  // walk is four rotations on them. Absent on seated and bound figures, which is
+  // why `animateWalk` checks rather than assumes.
+  group.userData.rig = { legs: legPivots, arms: armPivots };
   return group;
+}
+
+/**
+ * Poses a figure's limbs for a point in its stride.
+ *
+ * `phase` advances with distance travelled rather than with elapsed time. That
+ * is the whole fix for foot-slide: a figure that halves its speed halves its
+ * cadence, and a figure that stops mid-round stops with its feet where they
+ * were, instead of continuing to march on the spot. `blend` fades the swing out
+ * as a figure comes to rest so it settles rather than freezing mid-step.
+ */
+export function animateWalk(figure: THREE.Object3D, phase: number, blend: number) {
+  const rig = figure.userData.rig as
+    | { legs: THREE.Group[]; arms: THREE.Group[] }
+    | undefined;
+  if (!rig) return;
+  const swing = Math.sin(phase) * 0.52 * blend;
+  rig.legs.forEach((leg, index) => {
+    leg.rotation.x = index === 0 ? swing : -swing;
+  });
+  // Arms counter-swing against the legs, and at about half the amplitude: a
+  // matched swing reads as a march, and an opposed one at equal amplitude reads
+  // as a stage walk.
+  rig.arms.forEach((arm, index) => {
+    arm.rotation.x = (index === 0 ? -swing : swing) * 0.55;
+  });
 }
 
 export function makeChair(materials: Record<string, THREE.Material>, highBack = false) {
@@ -1153,6 +1292,7 @@ function makeHangingLamp(
   height: number,
   intensity: number,
   castShadow = false,
+  colour: THREE.ColorRepresentation = "#f0a85a",
 ) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
@@ -1176,7 +1316,7 @@ function makeHangingLamp(
   flame.scale.set(0.72, 1.45, 0.72);
   flame.position.set(0, height - 0.23, 0);
   group.add(flame);
-  const light = new THREE.PointLight("#f0a85a", intensity * 8.5, 14, 1.15);
+  const light = new THREE.PointLight(colour, intensity * 8.5, 14, 1.15);
   light.position.set(0, height - 0.2, 0);
   light.castShadow = castShadow;
   light.shadow.mapSize.set(1024, 1024);
@@ -1226,6 +1366,39 @@ function makePortcullis(materials: Record<string, THREE.Material>) {
   return gate;
 }
 
+/**
+ * An empty habit on a rail: shoulders, a fallen cowl, and cloth to the hem.
+ *
+ * Explicitly not a person. The press used to be filled with three calls to
+ * `makePerson`, which was survivable while a robed figure was a cone with two
+ * boxes under it and became grotesque the moment robed figures acquired faces
+ * and legs: the wardrobe stood open on three men hanging silently in a cupboard.
+ * A hanging garment has no head, no hands and no feet, and holds the shape of a
+ * shoulder only because there is a wooden crosspiece through it.
+ */
+function makeHangingGarment(materials: Record<string, THREE.Material>, drop: number) {
+  const garment = new THREE.Group();
+  // Cloth from the shoulder line down, hanging straighter and narrower than a
+  // worn robe because there is nobody inside it to fill it out.
+  const body = mesh(new THREE.CylinderGeometry(0.15, 0.23, drop, 14, 1), materials.blackCloth);
+  body.position.set(0, drop / 2, 0);
+  body.scale.z = 0.62;
+  garment.add(body);
+  // The yoke over the crosspiece, and the cowl fallen back off it.
+  const yoke = mesh(new THREE.SphereGeometry(0.17, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), materials.blackCloth);
+  yoke.position.set(0, drop, 0);
+  yoke.scale.set(1, 0.62, 0.62);
+  garment.add(yoke);
+  const cowl = mesh(new THREE.SphereGeometry(0.13, 14, 10, 0, Math.PI * 2, 0, 2), materials.blackCloth);
+  cowl.position.set(0, drop - 0.05, 0.11);
+  cowl.scale.set(1, 0.9, 0.72);
+  garment.add(cowl);
+  garment.traverse((item) => {
+    if ((item as THREE.Mesh).isMesh) (item as THREE.Mesh).castShadow = true;
+  });
+  return garment;
+}
+
 function makeWardrobe(materials: Record<string, THREE.Material>) {
   const group = new THREE.Group();
   addBox(group, materials.wood, [1.45, 2.65, 0.2], [0, 1.35, 0.42]);
@@ -1233,13 +1406,17 @@ function makeWardrobe(materials: Record<string, THREE.Material>) {
   addBox(group, materials.wood, [0.16, 2.75, 0.82], [0.7, 1.35, 0]);
   addBox(group, materials.wood, [1.55, 0.16, 0.82], [0, 2.69, 0]);
   addBox(group, materials.wood, [1.55, 0.16, 0.82], [0, 0.08, 0]);
-  addCylinder(group, materials.iron, 0.025, 0.025, 1.2, [0, 2.34, 0], [0, 0, Math.PI / 2], 6);
-  for (const x of [-0.38, 0, 0.38]) {
-    const garment = makePerson(materials, { hood: true, scale: 0.78 });
-    garment.position.set(x, 0.14, 0);
-    garment.scale.set(0.58, 0.95, 0.58);
+  const rail = 2.34;
+  addCylinder(group, materials.iron, 0.025, 0.025, 1.2, [0, rail, 0], [0, 0, Math.PI / 2], 8);
+  // Three habits on the rail, and a fourth space with nothing in it. The gap is
+  // the point of the room: one is missing, and the player is wearing it.
+  for (const x of [-0.42, -0.02, 0.4]) {
+    const garment = makeHangingGarment(materials, 1.62);
+    garment.position.set(x, rail - 1.62, 0);
     group.add(garment);
   }
+  // The bare hook the missing habit hung on.
+  addCylinder(group, materials.iron, 0.02, 0.02, 0.1, [0.55, rail - 0.06, 0], [0, 0, 0], 6);
   const leftDoor = addBox(group, materials.woodTrim, [0.12, 2.55, 0.7], [-1.03, 1.37, 0.18], [0, -0.8, 0]);
   const rightDoor = addBox(group, materials.woodTrim, [0.12, 2.55, 0.7], [1.03, 1.37, 0.18], [0, 0.8, 0]);
   leftDoor.castShadow = rightDoor.castShadow = true;
@@ -1259,46 +1436,147 @@ function makeRack(materials: Record<string, THREE.Material>) {
   return rack;
 }
 
+/**
+ * Bendetta's wall: a demon daubed onto bare stone, and a scratched chronicle.
+ *
+ * Painted with a transparent ground rather than an opaque one, so the masonry
+ * behind shows through everywhere the pigment does not reach. This is the whole
+ * difference between what the text describes and what was here before, which was
+ * an opaque rectangle in a chestnut frame — a hung picture, and hung pictures are
+ * furniture. A prisoner's demon is not furniture. It has no edge, no ground and
+ * no border; it is soot, ochre and a nail, worked directly into the wall by
+ * somebody who had years and no materials.
+ *
+ * Everything is therefore drawn crudely on purpose: single strokes that do not
+ * close, wavering lines, a mouth that is a scrape, and pigment that thins to
+ * nothing at the margins instead of stopping at one.
+ */
 function makeMuralTexture() {
   return makeCanvasTexture(768, 1024, (ctx, w, h) => {
-    const gradient = ctx.createLinearGradient(0, 0, w, h);
-    gradient.addColorStop(0, "#271810");
-    gradient.addColorStop(0.5, "#47251a");
-    gradient.addColorStop(1, "#130d0b");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, w, h);
-    for (let i = 0; i < 180; i++) {
-      ctx.fillStyle = `rgba(224,179,111,${Math.random() * 0.035})`;
-      ctx.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 8, 2 + Math.random() * 8);
-    }
-    ctx.strokeStyle = "#8e2d22";
-    ctx.fillStyle = "#3b1713";
-    ctx.lineWidth = 18;
-    ctx.beginPath();
-    ctx.moveTo(w * 0.5, h * 0.12);
-    ctx.lineTo(w * 0.2, h * 0.48);
-    ctx.lineTo(w * 0.35, h * 0.78);
-    ctx.lineTo(w * 0.5, h * 0.58);
-    ctx.lineTo(w * 0.65, h * 0.78);
-    ctx.lineTo(w * 0.8, h * 0.48);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#d49b4d";
-    ctx.fillRect(w * 0.37, h * 0.37, 55, 24);
-    ctx.fillRect(w * 0.56, h * 0.37, 55, 24);
-    ctx.strokeStyle = "#b58c55";
-    ctx.lineWidth = 8;
-    for (let i = 0; i < 7; i++) {
+    ctx.clearRect(0, 0, w, h);
+    // Deterministic, so the wall is the same wall on every visit. A prisoner's
+    // inscription that re-scrambled itself between two viewings would undo the
+    // one thing it is for.
+    let seed = 20250726;
+    const random = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+
+    const soot = (alpha: number) => `rgba(26,18,14,${alpha})`;
+    const ochre = (alpha: number) => `rgba(150,74,32,${alpha})`;
+    const chalk = (alpha: number) => `rgba(196,178,148,${alpha})`;
+
+    /** A stroke that wavers, thins and does not quite close. */
+    const scrawl = (
+      points: [number, number][],
+      colour: (a: number) => string,
+      width: number,
+      alpha: number,
+    ) => {
+      for (let pass = 0; pass < 3; pass++) {
+        ctx.strokeStyle = colour(alpha * (0.42 + random() * 0.3));
+        ctx.lineWidth = width * (0.6 + random() * 0.7);
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        points.forEach(([x, y], i) => {
+          const jx = x + (random() - 0.5) * width * 1.4;
+          const jy = y + (random() - 0.5) * width * 1.4;
+          if (i === 0) ctx.moveTo(jx, jy);
+          else ctx.lineTo(jx, jy);
+        });
+        ctx.stroke();
+      }
+    };
+
+    // Smeared ground: pigment rubbed in with a hand, densest at the centre and
+    // gone at the margins, so the painting has no edge.
+    for (let i = 0; i < 320; i++) {
+      const a = random() * Math.PI * 2;
+      const r = Math.pow(random(), 0.7);
+      const x = w * 0.5 + Math.cos(a) * r * w * 0.42;
+      const y = h * 0.44 + Math.sin(a) * r * h * 0.34;
+      ctx.fillStyle = random() < 0.6 ? soot(0.05 * (1 - r)) : ochre(0.055 * (1 - r));
       ctx.beginPath();
-      ctx.moveTo(w * 0.12, h * (0.82 + i * 0.02));
-      ctx.bezierCurveTo(w * 0.35, h * 0.76, w * 0.6, h * 0.96, w * 0.88, h * (0.82 + i * 0.018));
-      ctx.stroke();
+      ctx.ellipse(x, y, 14 + random() * 40, 10 + random() * 30, a, 0, Math.PI * 2);
+      ctx.fill();
     }
-    ctx.font = "bold 38px Georgia";
+
+    // The demon: horns, a heavy brow, and a body that is mostly shoulders. Drawn
+    // as an outline with a partial soot fill, the way a figure is drawn by
+    // somebody filling in what they can reach.
+    const horns: [number, number][] = [
+      [w * 0.29, h * 0.2], [w * 0.36, h * 0.29], [w * 0.44, h * 0.26],
+      [w * 0.5, h * 0.235], [w * 0.56, h * 0.26], [w * 0.64, h * 0.29],
+      [w * 0.71, h * 0.2],
+    ];
+    scrawl(horns, soot, 13, 0.85);
+    scrawl([[w * 0.36, h * 0.29], [w * 0.34, h * 0.42], [w * 0.42, h * 0.5],
+            [w * 0.58, h * 0.5], [w * 0.66, h * 0.42], [w * 0.64, h * 0.29]],
+           soot, 12, 0.8);
+    // Eyes: the text has them appear to move, so they are the one part given
+    // any weight — two ochre discs with a soot centre.
+    for (const ex of [0.435, 0.565]) {
+      ctx.fillStyle = ochre(0.72);
+      ctx.beginPath();
+      ctx.ellipse(w * ex, h * 0.355, 20, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = soot(0.85);
+      ctx.beginPath();
+      ctx.ellipse(w * ex + (random() - 0.5) * 4, h * 0.355, 8, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // A mouth scraped rather than drawn.
+    scrawl([[w * 0.42, h * 0.44], [w * 0.5, h * 0.465], [w * 0.58, h * 0.44]], soot, 9, 0.7);
+    for (let i = 0; i < 7; i++) {
+      const tx = w * (0.43 + i * 0.023);
+      scrawl([[tx, h * 0.443], [tx + 3, h * 0.462]], chalk, 4, 0.5);
+    }
+    // Shoulders and arms, ending before the hands: the wall runs out.
+    scrawl([[w * 0.42, h * 0.5], [w * 0.3, h * 0.57], [w * 0.22, h * 0.68]], soot, 14, 0.7);
+    scrawl([[w * 0.58, h * 0.5], [w * 0.7, h * 0.57], [w * 0.78, h * 0.68]], soot, 14, 0.7);
+    scrawl([[w * 0.42, h * 0.5], [w * 0.45, h * 0.72], [w * 0.55, h * 0.72], [w * 0.58, h * 0.5]], soot, 12, 0.6);
+
+    // The vermin the text lists, as small ochre marks around the figure's feet:
+    // serpents, a toad, a scorpion. Read as marks, not as illustrations.
+    for (let i = 0; i < 9; i++) {
+      const x = w * (0.16 + random() * 0.68);
+      const y = h * (0.72 + random() * 0.1);
+      scrawl([[x, y], [x + 22, y - 10], [x + 44, y + 6], [x + 62, y - 4]], ochre, 6, 0.55);
+    }
+
+    // The chronicle, scratched rather than written: rows of nail-marks with a
+    // name still legible at the end and the rest worn to strokes. Drawn as
+    // marks, so nothing here has to survive being read closely.
+    for (let row = 0; row < 6; row++) {
+      const y = h * (0.815 + row * 0.026);
+      let x = w * 0.1;
+      while (x < w * 0.9) {
+        const len = 5 + random() * 16;
+        scrawl([[x, y], [x + len, y + (random() - 0.5) * 5]], chalk, 3.2, 0.42);
+        x += len + 5 + random() * 9;
+      }
+    }
+    // Scraped away in the middle, as the text has it: the account is officially
+    // damaged, not merely old.
+    ctx.globalCompositeOperation = "destination-out";
+    for (let i = 0; i < 24; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${0.25 + random() * 0.5})`;
+      ctx.beginPath();
+      ctx.ellipse(w * (0.3 + random() * 0.42), h * (0.83 + random() * 0.1),
+                  18 + random() * 40, 7 + random() * 12, random(), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over";
+
+    // The name, cut deeper than anything else and left alone.
+    ctx.font = "44px Georgia";
     ctx.textAlign = "center";
-    ctx.fillStyle = "#b99a68";
-    ctx.fillText("BENEDETTA CAZZALA", w / 2, h * 0.95);
+    for (let pass = 0; pass < 3; pass++) {
+      ctx.fillStyle = chalk(0.3);
+      ctx.fillText("BENDETTA CAZZALA · XVII",
+                   w / 2 + (random() - 0.5) * 3, h * 0.965 + (random() - 0.5) * 3);
+    }
   });
 }
 
@@ -1537,7 +1815,19 @@ export class DungeonRenderer {
   private materials: Record<string, THREE.Material>;
   private headLamp: THREE.PointLight;
   private world: Grid;
+  private model = WORLD_MODEL;
   private patrols: { id: string; figure: THREE.Group }[] = [];
+  /**
+   * The figures' own state, owned by the renderer and advanced each frame.
+   *
+   * It lives here because the simulation is deliberately ignorant of the player
+   * and therefore has nothing to be driven by except the clock; exposing it as
+   * `npcStates` lets the game read what is being said without the simulation
+   * ever learning who is listening.
+   */
+  readonly npcStates: NpcState[] = createNpcStates(NPCS);
+  /** Stride phase per figure, advanced by distance walked rather than by time. */
+  private stride = new Map<string, { phase: number; travelled: number; blend: number }>();
 
   constructor(canvas: HTMLCanvasElement, world: Grid) {
     this.world = world;
@@ -1571,6 +1861,7 @@ export class DungeonRenderer {
     this.buildArchitecture(world);
     this.buildRooms();
     this.buildPatrols();
+    this.auditFloatingProps();
 
     // Morrowind interiors carried a substantial flat ambient term so surfaces
     // away from a lamp still showed their texture. Without it, the lamps'
@@ -1607,7 +1898,11 @@ export class DungeonRenderer {
       const positions: [number, number][] = [];
       world.forEach((row, z) =>
         row.forEach((cell, x) => {
-          if (cell === type) positions.push([x, z]);
+          // A screened cell keeps its masonry in the collision grid and loses it
+          // in the architecture: `buildCellFronts` puts a sill, a lintel and a
+          // field of bars there instead. Instancing a stone block here too would
+          // wall the bars up from behind.
+          if (cell === type && !isScreenAt(this.model, x, z)) positions.push([x, z]);
         }),
       );
       const geometry = new THREE.BoxGeometry(1.002, WALL_HEIGHT, 1.002);
@@ -1677,8 +1972,15 @@ export class DungeonRenderer {
     return gaps.length === 0;
   }
 
-  private addLamp(x: number, z: number, height = 3.25, intensity = 2.5, castShadow = false) {
-    const lamp = makeHangingLamp(this.materials, x, z, height, intensity, castShadow);
+  private addLamp(
+    x: number,
+    z: number,
+    height = 3.25,
+    intensity = 2.5,
+    castShadow = false,
+    colour = "#f0a85a",
+  ) {
+    const lamp = makeHangingLamp(this.materials, x, z, height, intensity, castShadow, colour);
     this.scene.add(lamp.group);
     this.lamps.push({
       light: lamp.light,
@@ -1861,57 +2163,68 @@ export class DungeonRenderer {
     }
     this.addLamp(17, 7.7, 3.38, 4.1, true);
 
-    // Marcello's cell.
-    const marcelloPallet = makePallet(m);
-    marcelloPallet.position.set(30.7, 0, 9.25);
-    marcelloPallet.rotation.y = Math.PI / 2;
-    this.scene.add(marcelloPallet);
-    const cellStool = makeStool(m);
-    cellStool.position.set(31.65, 0, 6.15);
-    this.scene.add(cellStool);
+    // The cell range.
+    //
+    // Three small cells off one gaoler's corridor, each fronted by iron rather
+    // than stone. The lamps are in the corridor only: a cell is lit by what
+    // spills through its own bars, so the light in it is barred light and a
+    // prisoner standing at the back of one is barely there at all. That is the
+    // whole difference between a dim room and a cell.
     const muralTexture = makeMuralTexture();
     this.disposableTextures.push(muralTexture);
-    // The cell's west wall block spans x 27..28, so its inner face is x = 28.
-    // Everything here used to sit at x ~ 27.5, half a metre inside the
-    // masonry and invisible from the cell. The wall is also pierced by the
-    // doorway at z 7..9, so the panel is centred clear of it.
-    const CELL_WEST_FACE = 28.01;
+    this.buildCellFronts();
+    for (const z of [5.5, 8.5, 11.5, 14.5, 17]) {
+      this.addLamp(29, z, 2.55, z === 8.5 || z === 14.5 ? 0.62 : 0.95, false, "#8fa2a6");
+    }
+
+    // Marcello's cell. Bendetta's wall faces the bars, so it is the first thing
+    // seen from the corridor and the last thing he can look away from.
+    const marcelloPallet = makePallet(m);
+    marcelloPallet.position.set(32.5, 0, 5.5);
+    this.scene.add(marcelloPallet);
+    const cellStool = makeStool(m);
+    cellStool.position.set(33.4, 0, 7.5);
+    this.scene.add(cellStool);
+    // The cell's east wall block spans x 34..35, so its inner face is x = 34.
+    const CELL_EAST_FACE = 33.985;
     const mural = wallDecal(
-      new THREE.PlaneGeometry(1.7, 2.48),
-      new THREE.MeshStandardMaterial({ map: muralTexture, color: "#8a7264", roughness: 1 }),
+      new THREE.PlaneGeometry(1.9, 2.7),
+      new THREE.MeshStandardMaterial({
+        map: muralTexture,
+        // Transparent, unlit-flat and slightly darkened, so the pigment sits in
+        // the masonry's own light instead of glowing off a panel of its own.
+        transparent: true,
+        color: "#9c8875",
+        roughness: 1,
+        depthWrite: false,
+      }),
     );
-    mural.position.set(CELL_WEST_FACE, 2.05, 6.0);
-    mural.rotation.y = Math.PI / 2;
+    mural.position.set(CELL_EAST_FACE, 1.9, 6.5);
+    mural.rotation.y = -Math.PI / 2;
     this.scene.add(mural);
-    this.checkWallBacking("cell mural", CELL_WEST_FACE, 6.0, "z", 1.7, 1);
-    for (const z of [5.12, 6.88]) {
-      addBox(this.scene, m.woodTrim, [0.09, 2.65, 0.11], [CELL_WEST_FACE + 0.01, 2.05, z]);
-    }
-    for (const y of [0.79, 3.31]) {
-      addBox(this.scene, m.woodTrim, [0.09, 0.11, 1.88], [CELL_WEST_FACE + 0.01, y, 6.0]);
-    }
-    for (let i = 0; i < 5; i++) {
+    this.checkWallBacking("Bendetta's wall", CELL_EAST_FACE, 6.5, "z", 1.9, -1);
+    // Nail-scratches cut into the stone below the painting, as relief rather
+    // than as texture: the chronicle is scratched, and a scratch has a depth.
+    for (let i = 0; i < 9; i++) {
       const scratch = addBox(
         this.scene,
         m.scratch,
-        [0.014, 0.014, 0.6],
-        [CELL_WEST_FACE + 0.015, 0.36 + i * 0.075, 6.0 + (i % 2) * 0.06],
-        [0.1, 0, 0.08],
+        [0.012, 0.012, 0.34 + (i % 3) * 0.12],
+        [CELL_EAST_FACE - 0.012, 0.42 + i * 0.062, 6.2 + (i % 2) * 0.22],
+        [0.06 * (i % 2 ? 1 : -1), 0, 0.05],
       );
       scratch.castShadow = false;
     }
-    this.addLamp(30, 7.15, 2.75, 1.55);
 
-    // Maddalena's cell.
+    // Maddalena's cell: no infernal pictures, a web, and a small gold cross.
     const maddalenaPallet = makePallet(m);
-    maddalenaPallet.position.set(30.7, 0, 17.6);
-    maddalenaPallet.rotation.y = Math.PI / 2;
+    maddalenaPallet.position.set(32.5, 0, 10.5);
     this.scene.add(maddalenaPallet);
-    // North wall block of this cell spans z 13..14, so its inner face is z = 14.
     const goldCross = makeScarletCross(m.brass, 0.35);
-    goldCross.position.set(31.6, 1.2, 14.03);
+    goldCross.position.set(32.6, 1.2, 12.965);
+    goldCross.rotation.y = Math.PI;
     this.scene.add(goldCross);
-    this.checkWallBacking("maddalena gold cross", 31.6, 14.03, "x", 0.17, 1);
+    this.checkWallBacking("maddalena gold cross", 32.6, 12.965, "x", 0.17, -1);
     const web = new THREE.Group();
     const webMaterial = new THREE.LineBasicMaterial({ color: "#9b9485", transparent: true, opacity: 0.4 });
     for (let i = 0; i < 6; i++) {
@@ -1924,30 +2237,33 @@ export class DungeonRenderer {
       for (let i = 0; i <= 36; i++) points.push(new THREE.Vector3(Math.cos((i / 36) * Math.PI * 2) * radius, Math.sin((i / 36) * Math.PI * 2) * radius, 0));
       web.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), webMaterial));
     }
-    web.position.set(28.04, 3.2, 14.4);
-    web.rotation.y = Math.PI / 2;
+    web.position.set(33.96, 3.2, 10.6);
+    web.rotation.y = -Math.PI / 2;
     this.scene.add(web);
-    this.checkWallBacking("maddalena web", 28.04, 14.4, "z", 0.84, 1);
-    this.addLamp(30, 15.8, 2.8, 1.45);
+
+    // The further cell: a pallet and nothing else entered against it.
+    const thirdPallet = makePallet(m);
+    thirdPallet.position.set(32.5, 0, 15.5);
+    this.scene.add(thirdPallet);
 
     // Wardrobe and disguise chamber.
+    //
+    // The press stands against the south wall. It used to stand squarely across
+    // the room's own doorway, leaving 0.50 of gap where the player needs 0.56,
+    // so the wardrobe could only be entered the long way round through the
+    // vault — a room about a disguise, sealed by its own furniture.
     const wardrobe = makeWardrobe(m);
-    wardrobe.position.set(10.7, 0, 19.6);
-    wardrobe.rotation.y = Math.PI / 2;
+    wardrobe.position.set(12.5, 0, 21.5);
     this.scene.add(wardrobe);
-    const bench = makeTable(m, 1.6, 0.46);
-    bench.position.set(12.65, -0.35, 21.25);
+    const bench = makeTable(m, 1.5, 0.46);
+    bench.position.set(12.5, 0, 19.6);
     this.scene.add(bench);
-    this.addLamp(12, 20.3, 2.95, 1.7);
+    this.addLamp(12.5, 20.5, 2.95, 1.7);
 
-    // Password vault.
-    const maskedOfficial = makePerson(m, { hood: true, masked: true, scale: 1.1 });
-    maskedOfficial.position.set(19.5, 0, 20.25);
-    maskedOfficial.rotation.y = Math.PI;
-    this.scene.add(maskedOfficial);
-    addBox(this.scene, m.woodTrim, [0.75, 0.08, 0.75], [19.5, 0.04, 20.25]);
-    const staff = addCylinder(this.scene, m.iron, 0.025, 0.035, 2.1, [19.95, 1.05, 20.28], [0, 0, 0], 8);
-    staff.castShadow = true;
+    // Password vault. The masked official standing here is a patrol, not a
+    // fixture: there used to be a static figure at his post as well as the
+    // patrol that walks it, so the same man stood in two places at once.
+    addBox(this.scene, m.woodTrim, [0.75, 0.08, 0.75], [19.6, 0.04, 20.4]);
     this.addLamp(19.5, 21.8, 3.1, 2.5, true);
 
     // Non-graphic torture antechamber.
@@ -1965,61 +2281,260 @@ export class DungeonRenderer {
     rack.position.set(27.3, 0, 23.1);
     rack.rotation.y = 0.35;
     this.scene.add(rack);
-    // Set along the south wall beside the rack. Lying diagonally across the east
-    // side, it left a 0.18 gap to the moon-stair doorway — narrower than the
-    // player — so the apparatus itself sealed the room's second exit. Grouping it
-    // with the rack also reads better: the apparatus occupies the far end and the
-    // route past it stays walkable.
     const narrowTable = makeTable(m, 1, 2.2);
     narrowTable.position.set(27.4, 0, 24.9);
     narrowTable.rotation.y = Math.PI / 2 - 0.15;
     this.scene.add(narrowTable);
-    const pulley = mesh(new THREE.TorusGeometry(0.48, 0.09, 8, 18), m.iron);
-    pulley.position.set(29.45, 2.45, 20.55);
+    // The apparatus hangs from the vault, and now visibly does.
+    //
+    // Everything in this room used to float. The pulley was a bare torus in mid
+    // air with nothing above it; the two rods stood from 1.48 to 3.63 with their
+    // tops half a metre short of the ceiling and their bottoms half a metre off
+    // the floor, so a pair of iron bars hung in the room supported by nothing at
+    // either end; and the rings hung off those. Machinery that floats is not
+    // sinister, it is unfinished — and in a room whose whole argument is that the
+    // apparatus is real and merely out of sight, that is the worst thing it could
+    // read as. Each piece is now carried by something that reaches the vault.
+    const beam = addBox(this.scene, m.wood, [0.22, 0.24, 4.4], [28.6, WALL_HEIGHT - 0.14, 22.6]);
+    beam.castShadow = true;
+    addCylinder(this.scene, m.iron, 0.03, 0.03, 1.42, [28.6, WALL_HEIGHT - 0.97, 20.9], [0, 0, 0], 8);
+    const pulley = mesh(new THREE.TorusGeometry(0.34, 0.07, 10, 22), m.iron);
+    pulley.position.set(28.6, WALL_HEIGHT - 1.7, 20.9);
     pulley.rotation.x = Math.PI / 2;
     this.scene.add(pulley);
+    // The cord over the pulley, hanging to a hook. It ends somewhere.
+    addCylinder(this.scene, m.iron, 0.012, 0.012, 1.5, [28.94, WALL_HEIGHT - 2.45, 20.9], [0, 0, 0], 6);
     for (const x of [26.4, 28.25]) {
-      addCylinder(this.scene, m.iron, 0.018, 0.018, 2.15, [x, 2.55, 24.9], [0, 0, 0], 6);
-      const ring = mesh(new THREE.TorusGeometry(0.13, 0.03, 6, 12), m.iron);
-      ring.position.set(x, 1.48, 24.9);
+      // Chains from the beam down to the manacle rings, and the rings hanging on
+      // them, rather than rods standing in the air with rings threaded on.
+      const drop = WALL_HEIGHT - 0.02 - 1.52;
+      addCylinder(this.scene, m.iron, 0.016, 0.016, drop, [x, 1.52 + drop / 2, 24.4], [0, 0, 0], 6);
+      const ring = mesh(new THREE.TorusGeometry(0.13, 0.03, 8, 16), m.iron);
+      // Hung on the chain's last link, not four centimetres beneath it.
+      ring.position.set(x, 1.55, 24.4);
       ring.rotation.x = Math.PI / 2;
       this.scene.add(ring);
     }
-    this.addLamp(27.2, 22.4, 2.85, 1.35);
+    // Two lamps rather than one. This room had a single lamp in a corner and was
+    // the darkest space in the building — which was accidental rather than
+    // designed: nobody had ever stood in it, because until the doorways were
+    // unsealed it could not be entered at all.
+    this.addLamp(26.4, 22.2, 2.85, 1.5);
+    this.addLamp(28.4, 24.6, 2.7, 1.15);
 
     // Moon door and stair.
-    for (let i = 0; i < 7; i++) {
-      addBox(this.scene, m.stone, [1.55, 0.18, 0.62], [33, 0.09 + i * 0.18, 25.3 - i * 0.48]);
+    //
+    // The treads are built from the plan's own stair, not beside it, so the step
+    // the player sees is the step the player stands on. Previously these were
+    // eight boxes drawn on a flat floor: the hidden stair could be walked
+    // through at ground level but never climbed, and the moon door sat three
+    // metres up a wall with nothing leading to it.
+    for (const flight of this.model.stairs) {
+      for (const tread of treadsOf(flight)) {
+        const width = flight.x2 - flight.x1;
+        const step = addBox(
+          this.scene,
+          m.stone,
+          [width, tread.height, tread.depth + 0.02],
+          [(flight.x1 + flight.x2) / 2, tread.height / 2, tread.centre],
+        );
+        step.receiveShadow = true;
+        step.castShadow = true;
+      }
     }
-    // The stair chamber's north wall block spans z 21..22, so its inner face is
-    // z = 22. The door was centred at z 21.6, which put the whole leaf inside
-    // the masonry: the exit of the escape route was invisible from the room it
-    // is reached from. Seated against the face instead, with its ironwork on
-    // the room side rather than buried in the stone behind it.
-    const moonDoor = addBox(this.scene, m.woodTrim, [1.45, 2.85, 0.18], [33, 2.45, 22.09]);
+    for (const level of this.model.landings) {
+      const slab = addBox(
+        this.scene,
+        m.stone,
+        [level.x2 - level.x1, level.height, level.y2 - level.y1],
+        [(level.x1 + level.x2) / 2, level.height / 2, (level.y1 + level.y2) / 2],
+      );
+      slab.receiveShadow = true;
+    }
+    // The door stands on the landing, on the inner face of the north wall.
+    const moonDoor = addBox(this.scene, m.woodTrim, [1.5, 2.4, 0.16], [33.5, 2.8, 21.07]);
     moonDoor.castShadow = true;
-    for (const x of [-0.48, 0, 0.48]) addBox(moonDoor, m.iron, [0.06, 2.65, 0.05], [x, 0, 0.12]);
-    this.checkWallBacking("moon door", 33, 22.09 - 0.09, "x", 1.45, 1);
-    const moonLight = new THREE.SpotLight("#9eb5cd", 3.5, 9, 0.3, 0.55, 1.2);
-    moonLight.position.set(33, 4.5, 20.6);
-    moonLight.target.position.set(33, 0, 25);
+    for (const x of [-0.5, 0, 0.5]) addBox(moonDoor, m.iron, [0.06, 2.24, 0.05], [x, 0, 0.11]);
+    addCylinder(this.scene, m.iron, 0.05, 0.05, 0.16, [34.06, 2.7, 21.02], [Math.PI / 2, 0, 0], 8);
+    this.checkWallBacking("moon door", 33.5, 21.0, "x", 1.5, 1);
+    // Cold light leaking round the door, against the warm lamps everywhere else.
+    // It is the only daylight-coloured thing in the building, and it is what the
+    // stair is climbed towards — so it has to be visible from the foot of the
+    // flight, which the old single spot aimed along the treads was not.
+    const leak = new THREE.PointLight("#a8c0d8", 3.4, 7, 1.25);
+    leak.position.set(33.5, 3.1, 21.55);
+    this.scene.add(leak);
+    const moonLight = new THREE.SpotLight("#9eb5cd", 9, 13, 0.5, 0.7, 1.05);
+    moonLight.position.set(33.5, 3.9, 21.3);
+    moonLight.target.position.set(33.5, 0, 25.6);
     this.scene.add(moonLight, moonLight.target);
+    // The gap itself: a thin cold sliver down each side of the leaf and across
+    // its head, so the door reads as shut against something bright rather than
+    // as a dark panel at the top of a stair.
+    const gap = new THREE.MeshBasicMaterial({ color: "#cfe0f2", fog: false });
+    for (const [w, h, x, y] of [
+      [0.035, 2.4, -0.77, 2.8],
+      [0.035, 2.4, 0.77, 2.8],
+      [1.57, 0.035, 0, 4.01],
+    ] as const) {
+      const sliver = mesh(new THREE.PlaneGeometry(w, h), gap, false);
+      sliver.position.set(33.5 + x, y, 21.055);
+      sliver.rotation.y = Math.PI;
+      this.scene.add(sliver);
+    }
+    // A lamp partway down the flight, so the treads are legible on the way up.
+    this.addLamp(33.5, 24.3, 3.3, 0.85);
+  }
+
+  /**
+   * Reports scenery that is holding itself up.
+   *
+   * The torture chamber had a pulley hanging in mid air, and a pair of iron rods
+   * whose tops stopped half a metre short of the vault and whose bottoms stopped
+   * half a metre above the flagstones, with the manacle rings threaded onto them
+   * — three separate objects supported by nothing at all. None of that is visible
+   * from the viewpoint each was positioned at, which is exactly why it survived:
+   * a number nudged until the piece looked right from one doorway is a number
+   * nobody has checked from anywhere else.
+   *
+   * A piece counts as carried if it reaches the floor, reaches the vault, meets
+   * masonry, or sits on something else that does. Everything left over is
+   * floating, and is named with its measurements so the fix is a measurement
+   * rather than another nudge.
+   */
+  private auditFloatingProps() {
+    const boxes: { name: string; box: THREE.Box3 }[] = [];
+    this.scene.updateMatrixWorld(true);
+    // The unit is the placed object — a chair, a lamp, a figure, a bare mesh
+    // dropped into a room — not each mesh within one. At mesh granularity every
+    // chair seat is "unsupported" because its legs are a different mesh, and the
+    // real floaters drown in a hundred of those.
+    for (const child of this.scene.children) {
+      if (child instanceof THREE.Light || child instanceof THREE.Camera) continue;
+      if ((child as unknown as THREE.InstancedMesh).isInstancedMesh) continue;
+      if (child instanceof THREE.Line) continue;
+      const mesh = child as THREE.Mesh;
+      // Wall decals and flames carry nothing and are hung, not stood.
+      if (mesh.isMesh && !mesh.castShadow) continue;
+      const box = new THREE.Box3().setFromObject(child);
+      if (!box.isEmpty()) boxes.push({ name: child.userData.label ?? child.type, box });
+    }
+
+    const touchesMasonry = (box: THREE.Box3) => {
+      for (let x = Math.floor(box.min.x - 0.12); x <= Math.floor(box.max.x + 0.12); x++) {
+        for (let z = Math.floor(box.min.z - 0.12); z <= Math.floor(box.max.z + 0.12); z++) {
+          if (z < 0 || z >= this.world.length || x < 0 || x >= this.world[z].length) continue;
+          if (this.world[z][x] !== "0") return true;
+        }
+      }
+      return false;
+    };
+
+    const floating: string[] = [];
+    for (const { name, box } of boxes) {
+      if (box.min.y <= 0.09) continue;
+      if (box.max.y >= WALL_HEIGHT - 0.14) continue;
+      if (touchesMasonry(box)) continue;
+      // Carried by something that starts lower and reaches up to it.
+      const carried = boxes.some(({ box: other }) => {
+        if (other === box) return false;
+        if (other.min.y >= box.min.y || other.max.y < box.min.y - 0.09) return false;
+        return (
+          other.max.x > box.min.x && other.min.x < box.max.x &&
+          other.max.z > box.min.z && other.min.z < box.max.z
+        );
+      });
+      if (!carried) {
+        floating.push(
+          `${name} spanning x ${box.min.x.toFixed(2)}..${box.max.x.toFixed(2)}, ` +
+            `z ${box.min.z.toFixed(2)}..${box.max.z.toFixed(2)}, ` +
+            `y ${box.min.y.toFixed(2)}..${box.max.y.toFixed(2)}`,
+        );
+      }
+    }
+    if (floating.length > 0) {
+      console.warn(
+        `[dungeon] ${floating.length} piece(s) of scenery are supported by nothing:\n  ` +
+          floating.join("\n  "),
+      );
+    }
+    return floating;
+  }
+
+  /**
+   * The iron fronts of the cells: bars where the plan says screen, and a hinged
+   * gate standing open where it says gate.
+   *
+   * Both are read from the model rather than placed by eye. A screen is masonry
+   * to the body and nothing to sight or sound, so the architecture has to agree
+   * with the collision exactly — bars drawn a cell away from the wall they stand
+   * in would be a cell you can see into and walk into, or one you can neither
+   * see into nor walk into, depending on which way the error went.
+   */
+  private buildCellFronts() {
+    const m = this.materials;
+    for (const front of this.model.screens) {
+      for (let y = front.y1; y <= front.y2; y++) {
+        for (let x = front.x1; x <= front.x2; x++) {
+          const cx = x + 0.5;
+          const cz = y + 0.5;
+          // Stone sill and lintel, with the bar field between them.
+          addBox(this.scene, m.cellStone, [1.01, 0.55, 1.01], [cx, 0.275, cz]);
+          addBox(this.scene, m.cellStone, [1.01, 0.75, 1.01], [cx, WALL_HEIGHT - 0.375, cz]);
+          for (let i = 0; i < 6; i++) {
+            const bar = addCylinder(
+              this.scene,
+              m.iron,
+              0.037,
+              0.037,
+              WALL_HEIGHT - 1.3,
+              [cx, 0.55 + (WALL_HEIGHT - 1.3) / 2, cz - 0.42 + i * 0.168],
+              [0, 0, 0],
+              8,
+            );
+            bar.castShadow = true;
+          }
+          for (const barY of [1.35, 3.05]) {
+            addCylinder(this.scene, m.iron, 0.03, 0.03, 1.0, [cx, barY, cz], [Math.PI / 2, 0, 0], 8);
+          }
+        }
+      }
+    }
+    // The gates themselves, hung open. Nothing in this building is ever locked
+    // against her, and a gate standing open is how that is said without a prompt
+    // or a keypress: the institution's own barrier, swung back, every time.
+    for (const gate of this.model.openings) {
+      if (!gate.id.endsWith("-gate")) continue;
+      const cz = (gate.y1 + gate.y2 + 1) / 2;
+      const leaf = new THREE.Group();
+      leaf.position.set(30.02, 0, cz - 0.5);
+      leaf.rotation.y = -1.15;
+      for (let i = 0; i < 5; i++) {
+        addCylinder(leaf, m.iron, 0.032, 0.032, 3.1, [0, 1.62, 0.1 + i * 0.2], [0, 0, 0], 8);
+      }
+      for (const barY of [0.22, 1.62, 3.02]) {
+        addBox(leaf, m.iron, [0.05, 0.075, 1.02], [0, barY, 0.5]);
+      }
+      leaf.traverse((item) => {
+        if ((item as THREE.Mesh).isMesh) (item as THREE.Mesh).castShadow = true;
+      });
+      this.scene.add(leaf);
+    }
   }
 
   private buildPatrols() {
     for (const npc of NPCS) {
-      const figure = makePerson(this.materials, {
-        hood: npc.id !== "tribunal-clerk",
-        beard: npc.id === "gate-familiar",
-        scale: npc.id === "masked-watch" ? 1.03 : 0.96,
-      });
+      // Appearance comes from the roster entry, so a figure cannot be given a
+      // body by one list and a round by another.
+      const figure = makePerson(this.materials, npc.appearance);
       figure.userData.patrol = npc.id;
       this.patrols.push({ id: npc.id, figure });
+      this.stride.set(npc.id, { phase: 0, travelled: 0, blend: 0 });
       this.scene.add(figure);
     }
   }
 
-  render(player: PlayerView, time: number) {
+  render(player: PlayerView, time: number, dtMs = 16.7) {
     const width = Math.max(1, this.renderer.domElement.clientWidth);
     const height = Math.max(1, this.renderer.domElement.clientHeight);
     const targetWidth = Math.floor(width * Math.min(window.devicePixelRatio || 1, 1.65));
@@ -2031,11 +2546,14 @@ export class DungeonRenderer {
     }
 
     const walkBob = Math.sin(time * 0.009) * 0.012;
-    this.camera.position.set(player.x, EYE_HEIGHT + walkBob, player.y);
+    // The eye rides on the floor the plan describes, so the moon stair is
+    // climbed rather than walked through at ground level.
+    const eye = groundHeightAt(this.model, player.x, player.y) + EYE_HEIGHT + walkBob;
+    this.camera.position.set(player.x, eye, player.y);
     const lookDistance = 10;
     this.camera.lookAt(
       player.x + Math.cos(player.dir) * lookDistance,
-      EYE_HEIGHT + Math.tan(player.pitch) * lookDistance,
+      eye + Math.tan(player.pitch) * lookDistance,
       player.y + Math.sin(player.dir) * lookDistance,
     );
 
@@ -2047,13 +2565,40 @@ export class DungeonRenderer {
       lamp.light.intensity = lamp.base * flicker;
       lamp.flame.scale.y = 1.28 + Math.sin(time * 0.015 + lamp.seed) * 0.18;
     }
+
+    updateNpcs(this.npcStates, NPCS, dtMs);
+    const byId = new Map(this.npcStates.map((state) => [state.id, state]));
     for (const patrol of this.patrols) {
-      const npc = NPCS.find((candidate) => candidate.id === patrol.id);
-      if (!npc) continue;
-      const position = npcPosition(npc, time);
-      patrol.figure.position.set(position.x, 0, position.y);
-      patrol.figure.rotation.y = Math.PI / 2 - position.dir;
-      patrol.figure.position.y = Math.abs(Math.sin(time * 0.004 * npc.speed)) * 0.018;
+      const state = byId.get(patrol.id);
+      if (!state) continue;
+      patrol.figure.position.set(
+        state.x,
+        groundHeightAt(this.model, state.x, state.y),
+        state.y,
+      );
+      // The model faces -Z, and rotating it by t sends that to
+      // (-sin t, -cos t). Setting that equal to (cos dir, sin dir) gives
+      // t = -PI/2 - dir. It was +PI/2 - dir, which is the same angle turned
+      // through half a circle: every figure in the building walked backwards,
+      // and had done since patrols were added.
+      patrol.figure.rotation.y = -Math.PI / 2 - state.heading;
+
+      const gait = this.stride.get(patrol.id);
+      if (!gait) continue;
+      // Cadence from distance, not from the clock. One full stride cycle per
+      // 0.82m walked, so a figure that stops stops striding — which is the
+      // difference between walking and being slid along the floor.
+      const moved = state.travelled - gait.travelled;
+      gait.travelled = state.travelled;
+      gait.phase += (moved / 0.82) * Math.PI * 2;
+      // Blend towards a stride when moving and towards stillness when not, so a
+      // figure arriving at a post settles instead of freezing mid-step.
+      const walking = state.phase === "walk" && moved > 1e-5;
+      gait.blend += ((walking ? 1 : 0) - gait.blend) * Math.min(1, dtMs / 160);
+      animateWalk(patrol.figure, gait.phase, gait.blend);
+      // A trace of vertical carry on the stride, in step with the legs rather
+      // than on a timer of its own.
+      patrol.figure.position.y += Math.abs(Math.sin(gait.phase)) * 0.014 * gait.blend;
     }
     this.renderer.render(this.scene, this.camera);
   }

@@ -169,7 +169,7 @@ await page.waitForTimeout(300);
 // Visit every discovery via the debug start points plus direct examination, so
 // reachability is exercised in the running game and not only in the model.
 const examined = [];
-for (const start of ["", "office", "tribunal", "cells", "vault"]) {
+for (const start of ["", "office", "tribunal", "marcello", "vault", "moon"]) {
   const target = start ? `${url}/?start=${start}` : url;
   await page.goto(target, { waitUntil: "networkidle" });
   await page.click("text=TAKE UP THE CLOAK");
@@ -186,6 +186,34 @@ for (const start of ["", "office", "tribunal", "cells", "vault"]) {
   }
 }
 check("discoveries can be examined from start points", examined.length > 0, examined.join(", "));
+
+// The renderer audits its own scenery on construction and warns about anything
+// supported by nothing. A clean boot is the assertion.
+const floaters = consoleLines.filter((line) => line.includes("supported by nothing"));
+check("no scenery is left floating", floaters.length === 0, floaters.join(" | "));
+
+const unbacked = consoleLines.filter((line) => line.includes("is unbacked at"));
+check("no wall piece hangs in a doorway", unbacked.length === 0, unbacked.join(" | "));
+
+// The moon stair is the one place the floor is not at zero. Standing at its foot
+// and at its head must give different eye heights, or it is decoration again.
+await page.goto(`${url}/?start=moon`, { waitUntil: "networkidle" });
+await page.click("text=TAKE UP THE CLOAK");
+await page.waitForSelector("canvas.world");
+await page.waitForTimeout(1500);
+const stairHeights = await page.evaluate(async () => {
+  const world = await import("/app/world/index.ts");
+  const model = world.WORLD_MODEL;
+  return {
+    foot: world.groundHeightAt(model, 33.5, 25.4),
+    head: world.groundHeightAt(model, 33.5, 21.2),
+  };
+});
+check(
+  "the moon stair rises between its foot and its head",
+  stairHeights.head - stairHeights.foot > 1.2,
+  `foot ${stairHeights.foot}, head ${stairHeights.head}`,
+);
 
 check("no uncaught errors or console errors", failures.length === 0, failures.join(" | "));
 

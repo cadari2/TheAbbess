@@ -3,10 +3,13 @@ import {
   type DerivedWorld,
   type Extent,
   type Grid,
+  type Landing,
   type Opening,
   type PlanStep,
   type Room,
+  type Screen,
   type SealedOpening,
+  type Stair,
 } from "./model.ts";
 
 const cellsOf = (extent: Extent) => {
@@ -41,6 +44,9 @@ export function derivePlan(
   const grid: Grid = Array.from({ length: height }, () => Array(width).fill("1"));
   const rooms: Room[] = [];
   const openings: Opening[] = [];
+  const screens: Screen[] = [];
+  const stairs: Stair[] = [];
+  const landings: Landing[] = [];
   /** Which plan step last wrote masonry into each cell, for blame. */
   const lastMason = new Map<string, string>();
 
@@ -80,11 +86,34 @@ export function derivePlan(
     for (const [x, y] of cellsOf(opening)) write(x, y, OPEN, opening.id);
   }
 
+  // Screens, stairs and landings write no masonry, so they are collected in a
+  // third pass with nothing to seal and nothing to be sealed by.
+  for (const step of plan) {
+    if (step.op === "screen") screens.push(step.screen);
+    else if (step.op === "stair") stairs.push(step.stair);
+    else if (step.op === "landing") landings.push(step.landing);
+  }
+
   const roomById = new Map(rooms.map((room) => [room.id, room]));
   for (const opening of openings) {
     for (const id of opening.between) {
       if (!roomById.has(id)) {
         throw new Error(`opening "${opening.id}" names unknown room "${id}"`);
+      }
+    }
+  }
+  for (const item of [...screens, ...stairs, ...landings]) {
+    if (!roomById.has(item.room)) {
+      throw new Error(`"${item.id}" names unknown room "${item.room}"`);
+    }
+  }
+  // A screen is masonry drawn as bars. If the cell under it is open floor there
+  // is no wall to replace, and the bars would hang across a doorway the player
+  // walks straight through.
+  for (const item of screens) {
+    for (const [x, y] of cellsOf(item)) {
+      if (grid[y][x] === OPEN) {
+        throw new Error(`screen "${item.id}" covers open floor at ${x},${y}`);
       }
     }
   }
@@ -109,7 +138,60 @@ export function derivePlan(
     openings,
     regions: rooms.map((room) => ({ ...floorExtent(room), id: room.id, name: room.name })),
     sealed,
+    screens,
+    stairs,
+    landings,
   };
+}
+
+/** Whether a grid cell's masonry is drawn as bars rather than stone. */
+export function isScreenAt(world: DerivedWorld, x: number, y: number) {
+  const gx = Math.floor(x);
+  const gy = Math.floor(y);
+  return world.screens.some(
+    (s) => gx >= s.x1 && gx <= s.x2 && gy >= s.y1 && gy <= s.y2,
+  );
+}
+
+/**
+ * The height of the floor under a position: stair tread, landing, or zero.
+ *
+ * Quantised to the tread rather than interpolated smoothly, so the surface the
+ * player stands on is the surface they can see. A smooth ramp under drawn steps
+ * puts the eye half a tread out for most of the climb, which reads as sinking
+ * into the stone and then rising out of it once per step.
+ */
+export function groundHeightAt(world: DerivedWorld, x: number, y: number) {
+  for (const landing of world.landings) {
+    if (x >= landing.x1 && x <= landing.x2 && y >= landing.y1 && y <= landing.y2) {
+      return landing.height;
+    }
+  }
+  for (const stair of world.stairs) {
+    if (x < stair.x1 || x > stair.x2 || y < stair.y1 || y > stair.y2) continue;
+    const along = stair.axis === "x"
+      ? (x - stair.x1) / (stair.x2 - stair.x1)
+      : (y - stair.y1) / (stair.y2 - stair.y1);
+    const tread = Math.min(stair.treads - 1, Math.floor(along * stair.treads));
+    return stair.from + ((stair.to - stair.from) * (tread + 0.5)) / stair.treads;
+  }
+  return 0;
+}
+
+/**
+ * Where each tread of a stair sits, so the renderer builds the surface the
+ * player is actually standing on rather than its own idea of one.
+ */
+export function treadsOf(stair: Stair) {
+  const alongLow = stair.axis === "x" ? stair.x1 : stair.y1;
+  const alongHigh = stair.axis === "x" ? stair.x2 : stair.y2;
+  const depth = (alongHigh - alongLow) / stair.treads;
+  return Array.from({ length: stair.treads }, (_, i) => ({
+    /** Centre of the tread along the climb axis. */
+    centre: alongLow + depth * (i + 0.5),
+    depth,
+    height: stair.from + ((stair.to - stair.from) * (i + 0.5)) / stair.treads,
+  }));
 }
 
 const overlaps = (a: Extent, b: Extent) =>
@@ -222,6 +304,10 @@ export function orphanedCells(world: DerivedWorld, fromX: number, fromY: number)
  * fixed short step rather than a grid-exact traversal because a supercover walk
  * treats a line grazing a corner as blocked, which would silence NPCs across
  * open doorways they are standing in.
+ *
+ * Iron screens are transparent here. They are masonry to the body and nothing at
+ * all to sight or sound, which is the entire architecture of a cell: the
+ * prisoner can be watched and heard from the corridor and cannot leave it.
  */
 export function hasLineOfSight(
   world: DerivedWorld,
@@ -235,7 +321,9 @@ export function hasLineOfSight(
   const samples = Math.ceil(distance / step);
   for (let i = 1; i < samples; i++) {
     const t = i / samples;
-    if (isWallAt(world, ax + (bx - ax) * t, ay + (by - ay) * t)) return false;
+    const x = ax + (bx - ax) * t;
+    const y = ay + (by - ay) * t;
+    if (isWallAt(world, x, y) && !isScreenAt(world, x, y)) return false;
   }
   return true;
 }

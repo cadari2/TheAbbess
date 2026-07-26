@@ -5,15 +5,20 @@ import { DungeonRenderer } from "./three-world";
 import {
   DISCOVERIES as discoveries,
   H,
-  NPCS,
   ROOM_ZONES as roomZones,
   W,
   WORLD,
-  npcPosition,
   roomNameAtPosition,
   type Discovery,
 } from "./world-data";
-import { PLAYER_RADIUS, SPAWN, WORLD_MODEL, isBlockedAt } from "./world/index.ts";
+import {
+  NPCS,
+  PLAYER_RADIUS,
+  SPAWN,
+  WORLD_MODEL,
+  isBlockedAt,
+  overheardAt,
+} from "./world/index.ts";
 
 function nearestDiscovery(x: number, y: number) {
   let nearest: Discovery | null = null;
@@ -42,11 +47,13 @@ function initialPlayer() {
     const start = new URLSearchParams(window.location.search).get("start");
     if (start === "tribunal") return { x: 19.6, y: 11.35, dir: -2.02, pitch: 0.08 };
     if (start === "tribunal-north") return { x: 19.7, y: 4.8, dir: 1.82, pitch: 0.02 };
-    if (start === "office") return { x: 7.25, y: 21.25, dir: -2.28, pitch: 0.02 };
-    if (start === "cells") return { x: 30, y: 8, dir: Math.PI, pitch: 0 };
+    if (start === "office") return { x: 6.4, y: 20.2, dir: -1.9, pitch: 0.02 };
+    if (start === "cells") return { x: 29, y: 13.5, dir: -Math.PI / 2, pitch: 0 };
+    if (start === "marcello") return { x: 31.4, y: 6.5, dir: 0, pitch: 0 };
+    if (start === "wardrobe") return { x: 12, y: 19.9, dir: 1.3, pitch: 0 };
     if (start === "vault") return { x: 19.5, y: 23.2, dir: -Math.PI / 2, pitch: 0 };
-    if (start === "groans") return { x: 26.5, y: 21.7, dir: 0, pitch: 0 };
-    if (start === "moon") return { x: 33.5, y: 24, dir: -Math.PI / 2, pitch: 0.12 };
+    if (start === "groans") return { x: 26, y: 22.4, dir: 0.5, pitch: 0 };
+    if (start === "moon") return { x: 33.5, y: 25.4, dir: -Math.PI / 2, pitch: 0.12 };
   }
   return { ...SPAWN };
 }
@@ -160,7 +167,7 @@ export default function InquisitionGame() {
       const ny = p.y + (Math.sin(p.dir) * move + Math.sin(p.dir + Math.PI / 2) * strafe) * speed;
       if (!isBlocked(nx, p.y)) p.x = nx;
       if (!isBlocked(p.x, ny)) p.y = ny;
-      dungeon.render(p, time);
+      dungeon.render(p, time, dt * 1000);
       const d = nearestDiscovery(p.x, p.y);
       setNear((current) => (current?.id === d?.id ? current : d));
       const z = roomName(p.x, p.y);
@@ -169,16 +176,19 @@ export default function InquisitionGame() {
         lastViewUpdate.current = time;
         setView({ ...p });
         setSurveyed((current) => (current.includes(z) ? current : [...current, z]));
-        const speaker = NPCS
-          .map((npc) => ({ npc, position: npcPosition(npc, time) }))
-          .map((candidate) => ({ ...candidate, distance: Math.hypot(candidate.position.x - p.x, candidate.position.y - p.y) }))
-          .sort((a, b) => a.distance - b.distance)[0];
-        if (speaker && speaker.distance < 3.25) {
-          const line = speaker.npc.dialogue[Math.floor(time / 9000) % speaker.npc.dialogue.length];
-          setHeard((current) => current?.id === speaker.npc.id && current.line === line
+        // Overhearing is resolved here, from a read-only view of NPC state, and
+        // never inside the simulation. Nothing in `updateNpcs` is given the
+        // player's position, so a line cannot begin because she arrived: she
+        // walks into it and out of it, and it is spoken whether or not she is
+        // there to hear it.
+        const speaker = overheardAt(WORLD_MODEL, dungeon.npcStates, NPCS, p.x, p.y);
+        setHeard((current) =>
+          current?.id === speaker?.id && current?.line === speaker?.line
             ? current
-            : { id: speaker.npc.id, name: speaker.npc.name, role: speaker.npc.role, line });
-        } else setHeard((current) => current === null ? current : null);
+            : speaker
+              ? { id: speaker.id, name: speaker.name, role: speaker.role, line: speaker.line }
+              : null,
+        );
       }
       frame.current = requestAnimationFrame(loop);
     };

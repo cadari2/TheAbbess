@@ -9,6 +9,11 @@ import type { DerivedWorld } from "./model.ts";
  * the torture apparatus. They live here rather than beside the geometry because
  * reachability has to account for them: a doorway wide enough in the masonry can
  * still be blocked by a barrel, and only the model can answer that.
+ *
+ * People are deliberately absent. The cloaked stranger passes through the
+ * institution's servants without being obstructed by them, exactly as she passes
+ * through its locks; interpenetration is the accepted tell. The circles here that
+ * sit under a seated figure are that figure's *chair*.
  */
 export type DungeonCollider =
   | { shape: "box"; x: number; z: number; halfX: number; halfZ: number }
@@ -18,7 +23,6 @@ export const DUNGEON_COLLIDERS: DungeonCollider[] = [
   { shape: "box", x: 5, z: 25.72, halfX: 2.15, halfZ: 0.16 },
   { shape: "circle", x: 3.25, z: 24.4, radius: 0.42 },
   { shape: "box", x: 6.75, z: 24.7, halfX: 0.48, halfZ: 0.48 },
-  { shape: "circle", x: 3.35, z: 23.3, radius: 0.38 },
   { shape: "box", x: 5.15, z: 19.4, halfX: 1.3, halfZ: 0.62 },
   { shape: "circle", x: 4.35, z: 18.48, radius: 0.4 },
   { shape: "circle", x: 5.95, z: 18.48, radius: 0.4 },
@@ -29,14 +33,19 @@ export const DUNGEON_COLLIDERS: DungeonCollider[] = [
   { shape: "circle", x: 15.45, z: 7.75, radius: 0.38 },
   { shape: "circle", x: 15.45, z: 9.05, radius: 0.38 },
   { shape: "circle", x: 17, z: 4.5, radius: 0.38 },
-  { shape: "circle", x: 18.55, z: 8.65, radius: 0.42 },
   { shape: "circle", x: 18.6, z: 9.65, radius: 0.35 },
-  { shape: "box", x: 30.7, z: 9.25, halfX: 0.46, halfZ: 0.92 },
-  { shape: "circle", x: 31.65, z: 6.15, radius: 0.3 },
-  { shape: "box", x: 30.7, z: 17.6, halfX: 0.46, halfZ: 0.92 },
-  { shape: "box", x: 10.7, z: 19.6, halfX: 0.5, halfZ: 0.9 },
-  { shape: "box", x: 12.65, z: 21.25, halfX: 0.9, halfZ: 0.36 },
-  { shape: "circle", x: 19.5, z: 20.25, radius: 0.44 },
+  // The three cells. Each pallet lies along its cell's north wall, leaving the
+  // floor between the pallet and the iron front clear — which is the only part
+  // of a cell a prisoner has, and it should be walkable.
+  { shape: "box", x: 32.5, z: 5.5, halfX: 0.85, halfZ: 0.4 },
+  { shape: "circle", x: 33.4, z: 7.5, radius: 0.3 },
+  { shape: "box", x: 32.5, z: 10.5, halfX: 0.85, halfZ: 0.4 },
+  { shape: "box", x: 32.5, z: 15.5, halfX: 0.85, halfZ: 0.4 },
+  // The press, moved off the office doorway it used to stand across. At its old
+  // seat it left 0.50 of gap where the player needs 0.56, so the wardrobe room's
+  // own door was impassable and the room could only be entered from the vault.
+  { shape: "box", x: 12.5, z: 21.5, halfX: 0.8, halfZ: 0.45 },
+  { shape: "box", x: 12.5, z: 19.6, halfX: 0.8, halfZ: 0.3 },
   // No collider for the portcullis at 24.15: it hangs raised in the doorway, and
   // a blocking volume there sealed the Chamber of Groans and the Moon Stair.
   { shape: "box", x: 27.3, z: 23.1, halfX: 1.28, halfZ: 0.95 },

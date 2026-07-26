@@ -70,8 +70,8 @@ export const DISCOVERIES: readonly Discovery[] = [
   {
     id: "marcello",
     room: "marcello",
-    x: 30,
-    y: 7,
+    x: 32,
+    y: 6,
     kicker: "V • CELL OF MARCELLO PORTA",
     title: "Bendetta’s Wall",
     text: "A rush pallet and a stool are the cell’s only mercies. In the lamp’s weak gleam, a painted demon watches over serpents, skulls, worms, a toad, and a scorpion. Below it, a prisoner’s scratched chronicle survives.",
@@ -84,8 +84,8 @@ export const DISCOVERIES: readonly Discovery[] = [
   {
     id: "maddalena",
     room: "maddalena",
-    x: 30,
-    y: 16,
+    x: 32,
+    y: 11,
     kicker: "VI • CELL OF MADDALENA ROSA",
     title: "The Plainer Dungeon",
     text: "This cell is narrow and lofty like Marcello’s, but its walls bear no infernal pictures. A spider threads its web beside the lamp. A small golden cross catches what little light there is.",
@@ -131,7 +131,7 @@ export const DISCOVERIES: readonly Discovery[] = [
   {
     id: "escape",
     room: "moon-stair",
-    x: 33,
+    x: 33.5,
     y: 24,
     kicker: "X • THE MOON DOOR",
     title: "The Hidden Stair",
