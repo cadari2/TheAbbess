@@ -864,6 +864,10 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
       [0, 0, side * 0.26],
       9,
     );
+    // Confined to the same plain shoulder cloth the slope wears. addCylinder
+    // leaves default UVs spanning the sheet's whole height, which drew the pale
+    // collar band across each sleeve and put a bright wedge on both shoulders.
+    remapUv(sleeve.geometry, 0, 1, GARMENT_COLLAR_V - 0.1, GARMENT_COLLAR_V);
     sleeve.castShadow = true;
   }
   // The belt follows the torso's ten-sided profile. It used to be a 0.48 x 0.31
