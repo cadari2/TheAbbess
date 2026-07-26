@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>npc lab — single figure, single light</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      #hud {
+        position: fixed;
+        top: 0;
+        left: 0;
+        padding: 8px 10px;
+        font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+        color: #b9c7d6;
+        background: rgba(0, 0, 0, 0.62);
+        white-space: pre;
+        pointer-events: none;
+      }
+      #hud b {
+        color: #ffcf8a;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud"></div>
+    <script type="module" src="./npc-lab.ts"></script>
+  </body>
+</html>
