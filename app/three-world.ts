@@ -391,11 +391,6 @@ function makeHead(
     head.add(hairShell);
   }
 
-  // Morrowind's characters never self-shadowed. Letting the skull cast into
-  // the shadow map drops a hard dark wedge from the chin down over the chest.
-  head.traverse((item) => {
-    item.castShadow = false;
-  });
   head.scale.copy(HEAD_SCALE);
   return head;
 }
@@ -615,6 +610,24 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     cross.position.set(0, torsoY + 0.02, -0.25);
     group.add(cross);
   }
+
+  // Characters cast into the lamps' shadow maps but never receive from them.
+  // The reference figures are lit by one source with deep, unshadowed fill and
+  // carry no shadow cast onto them at all. Sampling a point lamp's cube map
+  // across a body this small mostly produced acne and a hard band where a
+  // shadow camera cut the torso, which is what put the dark stripe across the
+  // prisoner's chest.
+  //
+  // This also retires the old rule that the head must not cast: a skull could
+  // drop a wedge from the chin over the chest only because the chest received.
+  // The head can now shadow the room like the rest of the figure.
+  group.traverse((item) => {
+    const part = item as THREE.Mesh;
+    if (!part.isMesh) return;
+    part.castShadow = true;
+    part.receiveShadow = false;
+  });
+
   group.scale.setScalar(scale);
   return group;
 }
