@@ -70,6 +70,23 @@ function standard(
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
+/**
+ * Marks a surface as shading flat: one normal per triangle, no interpolation
+ * across an edge, so every facet reads as its own plane.
+ *
+ * Three resolves this from screen-space derivatives of view position rather
+ * than from the normal attribute, so it changes shading only — geometry, the
+ * uploaded normals and the vertex count are all untouched.
+ *
+ * Applied to characters only. The masonry and the flagstones carry their form
+ * in their textures and read correctly smooth; it is the people who need to
+ * resolve facet by facet.
+ */
+function faceted<T extends THREE.Material>(material: T): T {
+  (material as unknown as { flatShading: boolean }).flatShading = true;
+  return material;
+}
+
 function mesh(
   geometry: THREE.BufferGeometry,
   material: THREE.Material,
@@ -380,10 +397,10 @@ function makeHead(
 
 export function makePerson(materials: Record<string, THREE.Material>, options: PersonOptions = {}) {
   const group = new THREE.Group();
-  const robe = options.robe ? standard(options.robe, 0.98) : materials.blackCloth;
+  const robe = options.robe ? faceted(standard(options.robe, 0.98)) : materials.blackCloth;
   // Matched to the portrait sheets' own skin tone so the neck and hands read as
   // the same person as the face.
-  const skin = standard(options.skin ?? "#9a7659", 1);
+  const skin = faceted(standard(options.skin ?? "#9a7659", 1));
   const seated = options.seated ?? false;
   const scale = options.scale ?? 1;
   const prisoner = options.prisoner ?? false;
@@ -570,7 +587,7 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
     addBox(group, materials.blackCloth, [0.225, 0.08, 0.215], [0, headY + 0.122, 0.004]);
     const tassel = addCylinder(
       group,
-      options.crimsonTassel ? materials.redSilk : materials.blackCloth,
+      options.crimsonTassel ? materials.redSilkFaceted : materials.blackCloth,
       0.018,
       0.021,
       0.16,
@@ -584,12 +601,12 @@ export function makePerson(materials: Record<string, THREE.Material>, options: P
   if (!options.prisoner && !options.hood) {
     // Clerical bands at the throat, tucked against the neck rather than
     // hovering in front of it.
-    addBox(group, materials.paper, [0.052, 0.115, 0.02], [-0.032, headY - 0.215, -0.066], [0.12, 0, 0.07]);
-    addBox(group, materials.paper, [0.052, 0.115, 0.02], [0.032, headY - 0.215, -0.066], [0.12, 0, -0.07]);
+    addBox(group, materials.paperFaceted, [0.052, 0.115, 0.02], [-0.032, headY - 0.215, -0.066], [0.12, 0, 0.07]);
+    addBox(group, materials.paperFaceted, [0.052, 0.115, 0.02], [0.032, headY - 0.215, -0.066], [0.12, 0, -0.07]);
   }
 
   if (options.cross) {
-    const cross = makeScarletCross(materials.redSilk, 0.42);
+    const cross = makeScarletCross(materials.redSilkFaceted, 0.42);
     cross.position.set(0, torsoY + 0.02, -0.25);
     group.add(cross);
   }
@@ -893,9 +910,9 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
   // own light and shade. A near-neutral tint preserves that detail; the old
   // dark tints multiplied it down until only a silhouette survived.
   const garment = (map: THREE.Texture, color: THREE.ColorRepresentation) =>
-    new THREE.MeshStandardMaterial({ map, color, roughness: 1 });
+    new THREE.MeshStandardMaterial({ map, color, roughness: 1, flatShading: true });
   const portrait = (map: THREE.Texture) =>
-    new THREE.MeshStandardMaterial({ map, color: "#f2eae0", roughness: 1 });
+    new THREE.MeshStandardMaterial({ map, color: "#f2eae0", roughness: 1, flatShading: true });
 
   const materials: Record<string, THREE.Material> = {
     // Kept well below white: the stone sheet is already light, and a bright
@@ -966,13 +983,14 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
       bumpScale: 0.012,
       color: "#3b322c",
       roughness: 1,
+      flatShading: true,
     }),
     officialRobe: garment(officialRobeTexture, "#b6afa4"),
     prisonerTunic: garment(prisonerTunicTexture, "#d8cbb1"),
     prisonerCloth: garment(prisonerTunicTexture, "#a8977a"),
     clothTrim: standard("#191411", 1),
     redSilk: standard("#7d1a24", 0.72),
-    darkLeather: standard("#40291b", 0.82),
+    darkLeather: faceted(standard("#40291b", 0.82)),
     // Dark and rough. A thin vertical bar always turns a fully light-facing
     // sliver toward the lamp, so it takes near-peak irradiance across its whole
     // visible width; anything but a low albedo clips it to a white stripe.
@@ -981,16 +999,16 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     // Carved and painted wood. A light tint here made the corpus on the
     // crucifix read as a stark white mannequin under the tribunal lamp.
     figure: standard("#5d5140", 1),
-    hair: standard("#241a13", 1),
+    hair: faceted(standard("#241a13", 1)),
     faceMature: portrait(faceMatureTexture),
     faceYoung: portrait(faceYoungTexture),
     faceElder: portrait(faceElderTexture),
     faceSecretary: portrait(faceSecretaryTexture),
-    eyeSocket: standard("#150e0a", 1),
+    eyeSocket: faceted(standard("#150e0a", 1)),
     eyeWhite: standard("#b7a88f", 1),
     mouth: standard("#4e241e", 1),
-    mask: standard("#3b352d", 1),
-    skin: standard("#a08066", 1),
+    mask: faceted(standard("#3b352d", 1)),
+    skin: faceted(standard("#a08066", 1)),
     straw: standard("#8e7436", 1),
     strawLight: standard("#b89448", 1),
     strawDark: standard("#5e4826", 1),
@@ -1002,6 +1020,13 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     wax: standard("#b69a6c", 0.9),
     flame: new THREE.MeshBasicMaterial({ color: "#ffd078" }),
   };
+
+  // Paper dresses both a cleric's throat bands and the documents on the
+  // tribunal table; scarlet silk dresses both a chest cross and the crosses
+  // mounted along the chestnut walls. Characters take their own faceted copies
+  // so that faceting people does not also facet the room's props.
+  materials.paperFaceted = faceted((materials.paper as THREE.MeshStandardMaterial).clone());
+  materials.redSilkFaceted = faceted((materials.redSilk as THREE.MeshStandardMaterial).clone());
 
   return { materials, textures };
 }
