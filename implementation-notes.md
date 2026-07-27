@@ -431,13 +431,25 @@ spawn under 27. It now asserts the property instead: after driving into masonry
 the player must not be inside masonry, evaluated against `isBlockedAt` in the
 running page.
 
-**The movement checks were a coin flip.** SwiftShader is fill-rate bound and at
-1280x720 this scene renders at about one frame per second, so a six-second
-key-hold advanced the player by one frame's worth of movement — 0.094 units —
-when it landed a frame at all. Twice running it landed none, and each time a
-*different* one of the two movement checks reported 0.000. The movement section
-now runs at 480x270, a seventh of the pixels, with the full viewport restored
-before anything that takes a picture.
+**The movement checks were measuring the check before them.** They kept
+reporting "moved 0.000", and twice running a *different* one of the two did it,
+which looks exactly like a framerate coin flip — SwiftShader is fill-rate bound
+and at 1280x720 this scene renders at about one frame per second. Dropping the
+movement section to 480x270 doubled the strafe's travel and left the forward
+press still reading exactly 0.000, twice, from the same spot. Exactly zero twice
+is not a framerate symptom.
+
+Driving the same presses in isolation moved the player normally: 33.40, 33.21,
+32.93 on two four-second holds, reversing correctly on "s". The difference was
+what ran immediately before. The lit-geometry check reads the entire canvas back
+from the GPU, and under SwiftShader that stalls the main thread for seconds — so
+the first key-hold after it landed *zero* animation frames while the identical
+hold elsewhere landed two. The harness was reporting on how long its previous
+check had taken.
+
+Both fixes are kept, because they are answers to different questions: the small
+viewport buys frames, and a settle that resolves only once two animation frames
+have actually been delivered removes the dependency on what ran before.
 
 Four of the seven `?start=` points also stood just outside the 2.15m examining
 range — the outer office at 2.22, the tribunal at 2.60 — so a check written to

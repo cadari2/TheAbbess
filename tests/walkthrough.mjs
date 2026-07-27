@@ -156,8 +156,25 @@ const position = async () => {
   return { x: (left / 100) * bounds.width, y: (top / 100) * bounds.height };
 };
 
+// Wait until the page is actually delivering frames before measuring movement.
+//
+// The lit-geometry check above reads the whole canvas back from the GPU, and
+// under SwiftShader that stalls the main thread for seconds. The first key-hold
+// after it repeatedly landed *zero* frames and reported "moved 0.000" — while
+// the identical press, in isolation, moved the player 0.19. Two runs blamed two
+// different checks for it. Resolving once two animation frames have actually
+// been delivered removes the dependency on how long the check before happened
+// to take.
+const settle = () =>
+  page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)));
+      }),
+  );
+
 await page.setViewportSize({ width: 480, height: 270 });
-await page.waitForTimeout(600);
+await settle();
 const before = await position();
 await press("w", 4000);
 const after = await position();
@@ -182,6 +199,7 @@ await page.screenshot({ path: `${outDir}/03-after-walk.png` });
 // does next, driving into a wall must not end with the player inside it, and
 // the approach bore runs x 4..6 so a body of radius 0.28 can never legitimately
 // stand outside 4.28..5.72.
+await settle();
 await press("a", 4000);
 const wall = await position();
 const clear = await page.evaluate(
