@@ -13,8 +13,11 @@ import test from "node:test";
 const world = await import("../app/world/index.ts");
 const {
   DISCOVERIES,
+  DOORS,
   NPCS,
   SPAWN,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
   WORLD_MODEL: model,
   gridToText,
   hasLineOfSight,
@@ -33,13 +36,17 @@ const {
   updateNpcs,
   overheardAt,
   turnToward,
+  createDoorStates,
+  updateDoors,
+  doorBlocksAt,
+  PLAYER_RADIUS,
 } = world;
 
 test("the plan builds a world of the declared size", () => {
-  assert.equal(model.width, 36);
-  assert.equal(model.height, 28);
-  assert.equal(model.grid.length, 28);
-  for (const row of model.grid) assert.equal(row.length, 36);
+  assert.equal(model.width, WORLD_WIDTH);
+  assert.equal(model.height, WORLD_HEIGHT);
+  assert.equal(model.grid.length, WORLD_HEIGHT);
+  for (const row of model.grid) assert.equal(row.length, WORLD_WIDTH);
 });
 
 test("no opening is sealed by the masonry of another plan step", () => {
@@ -231,10 +238,13 @@ test("a voice carries through iron and not through stone", () => {
   const marcello = states.find((s) => s.id === "marcello");
   marcello.saying = "Bendetta.";
   marcello.sayingMs = 5000;
-  const throughBars = overheardAt(model, [marcello], NPCS, 29, 6.5);
+  const throughBars = overheardAt(model, [marcello], NPCS, 29, 5.3);
   assert.ok(throughBars, "nothing audible from the corridor outside the cell");
   assert.equal(throughBars.id, "marcello");
   assert.equal(overheardAt(model, [marcello], NPCS, 22, 8), null, "audible through the rock");
+  // And the gaol's own length defeats it: six cells down the corridor is out of
+  // earshot even though nothing but air is in the way.
+  assert.equal(overheardAt(model, [marcello], NPCS, 29, 24.5), null, "audible the length of the corridor");
 });
 
 test("turning takes the short way round", () => {
@@ -300,8 +310,8 @@ test("holding forward from the spawn walks out of the gate court", () => {
       break;
     }
   }
-  assert.equal(startRoom, "THE PRISON GATE");
-  assert.equal(arrived, "THE OUTER OFFICE", `walked ${travelled.toFixed(2)} and reached ${arrived}`);
+  assert.equal(startRoom, "THE APPROACH");
+  assert.equal(arrived, "THE PRISON GATE", `walked ${travelled.toFixed(2)} and reached ${arrived}`);
 });
 
 test("the derived grid matches the recorded plan", async () => {
@@ -330,8 +340,8 @@ test("the cells are fronted with iron, not walled up", () => {
     }
   }
   // And open to the eye: a prisoner is visible from the corridor outside.
-  assert.equal(hasLineOfSight(model, 29, 6.5, 32.5, 6.5), true);
-  assert.equal(hasLineOfSight(model, 29, 11.5, 32.5, 11.5), true);
+  assert.equal(hasLineOfSight(model, 29, 5.3, 32.5, 5.3), true);
+  assert.equal(hasLineOfSight(model, 29, 9.3, 32.5, 9.3), true);
 });
 
 test("the moon stair climbs, and climbs to the door", () => {
@@ -340,13 +350,14 @@ test("the moon stair climbs, and climbs to the door", () => {
   const landing = model.landings.find((s) => s.id === "moon-landing");
   assert.ok(landing, "no landing in the plan");
   // Level floor at the foot, rising all the way to the landing's height.
-  assert.equal(groundHeightAt(model, 33.5, 25.4), 0);
-  assert.equal(groundHeightAt(model, 33.5, 21.2), landing.height);
+  const axis = (flight.x1 + flight.x2) / 2;
+  assert.equal(groundHeightAt(model, axis, 34.4), 0);
+  assert.equal(groundHeightAt(model, axis, 30.2), landing.height);
   assert.ok(landing.height > 1.2, "the climb is not worth the name");
   // Monotonic: no tread drops below the one below it.
   let previous = -1;
-  for (let y = 25.9; y >= 21.0; y -= 0.05) {
-    const height = groundHeightAt(model, 33.5, y);
+  for (let y = 34.9; y >= 30.0; y -= 0.05) {
+    const height = groundHeightAt(model, axis, y);
     assert.ok(height >= previous - 1e-9, `the stair falls at y=${y.toFixed(2)}`);
     previous = height;
   }
@@ -354,7 +365,7 @@ test("the moon stair climbs, and climbs to the door", () => {
   const door = model.openings.find((o) => o.id === "groans-moonstair");
   for (let y = door.y1 + 0.3; y <= door.y2 + 0.7; y += 0.1) {
     assert.equal(
-      groundHeightAt(model, 33.5, y),
+      groundHeightAt(model, axis, y),
       0,
       `the doorway opens onto a tread at y=${y.toFixed(2)}`,
     );
@@ -381,4 +392,128 @@ test("no prop stands in a doorway the player has to pass through", () => {
     }
     assert.ok(widest > 0.3, `${opening.id} is passable across only ${widest.toFixed(2)}`);
   }
+});
+
+test("a swinging leg stays inside its robe", () => {
+  // The fault this replaces: a 0.72m cone to a hem of 0.262 over legs swinging
+  // 0.52 radians put the knee's surface 0.253 from the axis where the cloth was
+  // 0.224, so the knee came through the front of every cassock on every stride
+  // and the shin was outside the garment for the whole of the lower swing.
+  //
+  // Checked at the shipped swing and at half again beyond it, so the margin is
+  // real rather than exactly zero at the one value that happens to be in use.
+  const clearance = -world.legEscapesRobe(world.LEG_SWING);
+  assert.ok(clearance > 0.01, `the leg leaves the robe by ${(-clearance).toFixed(3)}m`);
+  // And the containment must not have been bought by turning the robe into a
+  // tunic. The hem still falls below the knee, which is what makes it a habit.
+  const hem = world.ROBE.centreY - world.ROBE.height / 2;
+  assert.ok(hem < world.LEG.kneeY, `the hem has risen to ${hem.toFixed(2)}, above the knee`);
+});
+
+test("a stride covers the distance the legs actually swing", () => {
+  // Cadence is driven from distance travelled, so if the cycle length disagrees
+  // with the geometry the feet slide over the floor at exactly the difference.
+  const step = 2 * world.LEG.hipY * Math.sin(world.LEG_SWING);
+  assert.ok(
+    Math.abs(world.STRIDE_CYCLE - 2 * step) < 1e-9,
+    `a cycle of ${world.STRIDE_CYCLE.toFixed(3)} against two steps of ${step.toFixed(3)}`,
+  );
+});
+
+test("the cell gates are shut until she is close, and one is never open at all", () => {
+  const states = createDoorStates(DOORS);
+  const gate = DOORS.find((d) => d.id === "marcello-gate");
+  const mid = [
+    gate.hinge[0] + (gate.along[0] * gate.width) / 2,
+    gate.hinge[1] + (gate.along[1] * gate.width) / 2,
+  ];
+  // Shut, and solid, with nobody near it.
+  assert.equal(states.find((s) => s.id === gate.id).open, 0);
+  assert.equal(doorBlocksAt(states, DOORS, mid[0], mid[1], PLAYER_RADIUS), true);
+
+  // Standing well back leaves it shut however long it is left.
+  updateDoors(states, DOORS, mid[0] - 6, mid[1], 10000);
+  assert.equal(states.find((s) => s.id === gate.id).open, 0);
+
+  // Walking up to it opens it, and the doorway becomes passable.
+  updateDoors(states, DOORS, mid[0] - 1.2, mid[1], gate.travelMs);
+  assert.equal(states.find((s) => s.id === gate.id).open, 1);
+  assert.equal(doorBlocksAt(states, DOORS, mid[0], mid[1], PLAYER_RADIUS), false);
+
+  // Walking away shuts it again.
+  updateDoors(states, DOORS, mid[0] - 6, mid[1], gate.travelMs);
+  assert.equal(states.find((s) => s.id === gate.id).open, 0);
+
+  // The approach door is the exception, and stays the exception: standing on it
+  // for a minute does not move it.
+  const outer = DOORS.find((d) => d.id === "approach-door");
+  assert.equal(outer.yieldsWithin, null);
+  updateDoors(states, DOORS, outer.hinge[0] + outer.width / 2, outer.hinge[1], 60000);
+  assert.equal(states.find((s) => s.id === outer.id).open, 0);
+  assert.equal(
+    doorBlocksAt(states, DOORS, outer.hinge[0] + outer.width / 2, outer.hinge[1], PLAYER_RADIUS),
+    true,
+    "the way out is not shut",
+  );
+});
+
+test("every cell gate hangs in the doorway its plan cuts", () => {
+  const gates = model.openings.filter((o) => o.id.endsWith("-gate"));
+  assert.equal(gates.length, 6, "the gaol has lost a cell");
+  for (const opening of gates) {
+    const door = DOORS.find((d) => d.id === opening.id);
+    assert.ok(door, `${opening.id} has no leaf`);
+    // The hinge stands in the opening's own cells, so a doorway that moves in
+    // the plan cannot leave its iron behind in the old wall.
+    assert.ok(
+      door.hinge[0] >= opening.x1 && door.hinge[0] <= opening.x2 + 1,
+      `${opening.id}'s hinge is outside its doorway in x`,
+    );
+    assert.ok(
+      door.hinge[1] >= opening.y1 && door.hinge[1] <= opening.y2 + 1,
+      `${opening.id}'s hinge is outside its doorway in y`,
+    );
+  }
+});
+
+test("no sightline runs the length of the building", () => {
+  // The layout's own argument is compartmented secrecy, and the strongest thing
+  // working against it is a straight line. Before the bent passage there was a
+  // clear shot of twenty-nine cells along row 8 — the tribunal's west door to
+  // the inside of a cell, five rooms on one line.
+  //
+  // Rooms are allowed to be as long as they are; what is not allowed is a run
+  // that crosses more than two of them.
+  const longest = { run: 0, where: "" };
+  const scan = (cells, label) => {
+    let run = 0;
+    let start = 0;
+    for (let i = 0; i <= cells.length; i++) {
+      const open = i < cells.length && !cells[i];
+      if (open) {
+        if (run === 0) start = i;
+        run++;
+      } else {
+        if (run > longest.run) {
+          longest.run = run;
+          longest.where = `${label} ${start}..${start + run - 1}`;
+        }
+        run = 0;
+      }
+    }
+  };
+  for (let y = 0; y < model.height; y++) {
+    const cells = [];
+    for (let x = 0; x < model.width; x++) cells.push(isWallAt(model, x + 0.5, y + 0.5));
+    // The gaoler's corridor is meant to be long, and is the one room whose whole
+    // effect is that you can see all six identical fronts at once.
+    scan(cells, `row ${y}`);
+  }
+  for (let x = 0; x < model.width; x++) {
+    if (x === 28 || x === 29) continue;
+    const cells = [];
+    for (let y = 0; y < model.height; y++) cells.push(isWallAt(model, x + 0.5, y + 0.5));
+    scan(cells, `column ${x}`);
+  }
+  assert.ok(longest.run <= 20, `a clear run of ${longest.run} cells at ${longest.where}`);
 });

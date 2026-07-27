@@ -12,10 +12,12 @@ import {
   type Discovery,
 } from "./world-data";
 import {
+  DOORS,
   NPCS,
   PLAYER_RADIUS,
   SPAWN,
   WORLD_MODEL,
+  doorBlocksAt,
   isBlockedAt,
   overheardAt,
 } from "./world/index.ts";
@@ -45,15 +47,17 @@ const isBlocked = (x: number, y: number, radius = PLAYER_RADIUS) =>
 function initialPlayer() {
   if (typeof window !== "undefined") {
     const start = new URLSearchParams(window.location.search).get("start");
-    if (start === "tribunal") return { x: 19.6, y: 11.35, dir: -2.02, pitch: 0.08 };
-    if (start === "tribunal-north") return { x: 19.7, y: 4.8, dir: 1.82, pitch: 0.02 };
+    if (start === "gate") return { x: 6.5, y: 25.6, dir: -Math.PI / 2, pitch: 0 };
+    if (start === "tribunal") return { x: 16.5, y: 10.6, dir: -Math.PI / 2, pitch: 0.06 };
+    if (start === "tribunal-north") return { x: 12.4, y: 7.2, dir: -0.7, pitch: 0.02 };
     if (start === "office") return { x: 6.4, y: 20.2, dir: -1.9, pitch: 0.02 };
-    if (start === "cells") return { x: 29, y: 13.5, dir: -Math.PI / 2, pitch: 0 };
-    if (start === "marcello") return { x: 31.4, y: 6.5, dir: 0, pitch: 0 };
+    if (start === "cells") return { x: 29, y: 14.5, dir: -Math.PI / 2, pitch: 0 };
+    if (start === "marcello") return { x: 29, y: 5.2, dir: 0, pitch: 0 };
+    if (start === "grate") return { x: 29, y: 9.4, dir: 0, pitch: 0.16 };
     if (start === "wardrobe") return { x: 12, y: 19.9, dir: 1.3, pitch: 0 };
-    if (start === "vault") return { x: 19.5, y: 23.2, dir: -Math.PI / 2, pitch: 0 };
-    if (start === "groans") return { x: 26, y: 22.4, dir: 0.5, pitch: 0 };
-    if (start === "moon") return { x: 33.5, y: 25.4, dir: -Math.PI / 2, pitch: 0.12 };
+    if (start === "vault") return { x: 19.5, y: 22.2, dir: -Math.PI / 2, pitch: 0 };
+    if (start === "groans") return { x: 19.5, y: 26, dir: Math.PI / 2, pitch: 0 };
+    if (start === "moon") return { x: 29, y: 33.6, dir: -Math.PI / 2, pitch: 0.12 };
   }
   return { ...SPAWN };
 }
@@ -165,8 +169,14 @@ export default function InquisitionGame() {
       const speed = dt * 2.35;
       const nx = p.x + (Math.cos(p.dir) * move + Math.cos(p.dir + Math.PI / 2) * strafe) * speed;
       const ny = p.y + (Math.sin(p.dir) * move + Math.sin(p.dir + Math.PI / 2) * strafe) * speed;
-      if (!isBlocked(nx, p.y)) p.x = nx;
-      if (!isBlocked(p.x, ny)) p.y = ny;
+      // Doors are tested against where their leaves actually are this frame, so
+      // a gate that has begun to swing stops the player with whatever is still
+      // in the way — and the approach door, which never swings, stops her for
+      // good.
+      const shut = (x: number, y: number) =>
+        doorBlocksAt(dungeon.doorStates, DOORS, x, y, PLAYER_RADIUS);
+      if (!isBlocked(nx, p.y) && !shut(nx, p.y)) p.x = nx;
+      if (!isBlocked(p.x, ny) && !shut(p.x, ny)) p.y = ny;
       dungeon.render(p, time, dt * 1000);
       const d = nearestDiscovery(p.x, p.y);
       setNear((current) => (current?.id === d?.id ? current : d));

@@ -33,6 +33,10 @@ const browser = await chromium.launch({
   args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+// Software WebGL renders this scene at around 1fps, and a screenshot waits for a
+// frame. The default 30s is not enough now the world is 40x40 and every wall is
+// an instanced box; this is a property of the test rig, not of the game.
+page.setDefaultTimeout(120000);
 
 const consoleLines = [];
 const failures = [];
@@ -108,7 +112,7 @@ const label = () => page.locator(".location-card strong").innerText();
 const startLabel = await label();
 check("location label reads on entry", startLabel.length > 0, startLabel);
 
-// Walk north out of the gate court and into the outer office.
+// Walk north out of the approach and into the gate hall.
 const press = async (key, ms) => {
   await page.keyboard.down(key);
   await page.waitForTimeout(ms);
@@ -169,7 +173,7 @@ await page.waitForTimeout(300);
 // Visit every discovery via the debug start points plus direct examination, so
 // reachability is exercised in the running game and not only in the model.
 const examined = [];
-for (const start of ["", "office", "tribunal", "marcello", "vault", "moon"]) {
+for (const start of ["gate", "office", "tribunal", "marcello", "vault", "groans", "moon"]) {
   const target = start ? `${url}/?start=${start}` : url;
   await page.goto(target, { waitUntil: "networkidle" });
   await page.click("text=TAKE UP THE CLOAK");
@@ -205,8 +209,8 @@ const stairHeights = await page.evaluate(async () => {
   const world = await import("/app/world/index.ts");
   const model = world.WORLD_MODEL;
   return {
-    foot: world.groundHeightAt(model, 33.5, 25.4),
-    head: world.groundHeightAt(model, 33.5, 21.2),
+    foot: world.groundHeightAt(model, 28.5, 34.4),
+    head: world.groundHeightAt(model, 28.5, 30.2),
   };
 });
 check(

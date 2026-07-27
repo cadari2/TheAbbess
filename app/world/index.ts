@@ -36,9 +36,27 @@ export {
   type RouteNode,
 } from "./npcs.ts";
 export { NPCS } from "./roster.ts";
+export {
+  LEG,
+  LEG_SWING,
+  ROBE,
+  STRIDE_CYCLE,
+  legEscapesRobe,
+  robeRadiusAt,
+} from "./figure.ts";
 export { EARSHOT, overheardAt, type Overheard } from "./earshot.ts";
 export { DISCOVERIES, misplacedDiscoveries, type Discovery } from "./discoveries.ts";
 export {
+  DOORS,
+  createDoorStates,
+  doorBlocksAt,
+  doorLeafEnd,
+  updateDoors,
+  type DoorDefinition,
+  type DoorState,
+} from "./doors.ts";
+export {
+  CELL_ROWS,
   DUNGEON_COLLIDERS,
   PLAYER_RADIUS,
   floodContains,

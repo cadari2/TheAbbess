@@ -22,12 +22,15 @@ export const NPCS: readonly NpcDefinition[] = [
     speed: 0.62,
     appearance: { hood: true, beard: true, face: "elder", scale: 0.98 },
     route: [
-      { at: [6.8, 18.9], dwellMs: 3400, facing: Math.PI / 2, say: "The Office receives no one by that name." },
-      { at: [6.8, 20.7] },
-      { at: [5.5, 20.7] },
-      { at: [5.5, 23.6], dwellMs: 3000, facing: -Math.PI / 2, say: "Nothing came in tonight. Write that, and write nothing else." },
-      { at: [5.5, 20.7] },
-      { at: [6.8, 20.7] },
+      { at: [6.9, 18.7], dwellMs: 3400, facing: Math.PI / 2, say: "The Office receives no one by that name." },
+      { at: [7.5, 20.4] },
+      { at: [7.5, 23.6] },
+      { at: [7.5, 25.6], dwellMs: 3000, facing: Math.PI / 2, say: "Nothing came in tonight. Write that, and write nothing else." },
+      { at: [9.6, 25.6] },
+      { at: [9.6, 27.3], dwellMs: 2600, facing: Math.PI / 2, say: "Whoever is at the door may wait. The door is the point." },
+      { at: [9.6, 25.6] },
+      { at: [7.5, 25.6] },
+      { at: [7.5, 20.4] },
     ],
   },
   {
@@ -40,12 +43,10 @@ export const NPCS: readonly NpcDefinition[] = [
     // The north end is closed by the secretary's own chair, and the table itself
     // fills the middle of the room; a closed circuit here has to retrace.
     route: [
-      { at: [20.6, 5.2], dwellMs: 3200, facing: Math.PI, say: "Every answer is entered. Every silence also." },
-      { at: [20.6, 11.55] },
-      { at: [13.4, 11.55] },
-      { at: [13.4, 5.2], dwellMs: 2600, facing: 0, say: "The fathers will summon the prisoner when the record is prepared." },
-      { at: [13.4, 11.55] },
-      { at: [20.6, 11.55] },
+      { at: [11.4, 5.4], dwellMs: 3200, facing: Math.PI / 2, say: "Every answer is entered. Every silence also." },
+      { at: [11.4, 10.4] },
+      { at: [21.6, 10.4], dwellMs: 2600, facing: -Math.PI / 2, say: "The fathers will summon the prisoner when the record is prepared." },
+      { at: [11.4, 10.4] },
     ],
   },
   {
@@ -58,10 +59,13 @@ export const NPCS: readonly NpcDefinition[] = [
     // The facings are what make him a gaoler rather than a man walking: he turns
     // to look into the cell for the whole of his pause.
     route: [
-      { at: [29, 6.5], dwellMs: 3800, facing: 0, say: "The young man studies the painted wall. He has not eaten." },
-      { at: [29, 11.5], dwellMs: 3800, facing: 0, say: "The woman prays. She has stopped asking the hour." },
-      { at: [29, 16.5], dwellMs: 3200, facing: 0, say: "This one has no name entered against him at all." },
-      { at: [29, 11.5] },
+      { at: [29, 4.5], dwellMs: 3800, facing: 0, say: "The young man studies the painted wall. He has not eaten." },
+      { at: [29, 8.5], dwellMs: 3800, facing: 0, say: "The woman prays. She has stopped asking the hour." },
+      { at: [29, 12.5], dwellMs: 3200, facing: 0, say: "This one has no name entered against him at all." },
+      { at: [29, 16.5], dwellMs: 2400, facing: 0, say: "Empty since the spring. It is entered in the book as occupied." },
+      { at: [29, 20.5], dwellMs: 2800, facing: 0, say: "Whoever kept this one counted the days on the wall, and stopped at ninety." },
+      { at: [29, 24.5], dwellMs: 3000, facing: 0, say: "The last one. We put them here when we mean to forget the hour they came." },
+      { at: [29, 14.5] },
     ],
   },
   {
@@ -72,7 +76,7 @@ export const NPCS: readonly NpcDefinition[] = [
     appearance: { hood: true, masked: true, scale: 1.06 },
     route: [
       { at: [19.6, 20.4], dwellMs: 5400, facing: Math.PI / 2, say: "The word? No—do not speak it here." },
-      { at: [21, 22.6], dwellMs: 3800, facing: -Math.PI / 2, say: "I know the habit. I do not know the man within it." },
+      { at: [20.9, 22.4], dwellMs: 3800, facing: -Math.PI / 2, say: "I know the habit. I do not know the man within it." },
     ],
   },
   // The prisoners. They are given rounds too, of two paces and long stillnesses,
@@ -85,8 +89,8 @@ export const NPCS: readonly NpcDefinition[] = [
     speed: 0.22,
     appearance: { prisoner: true, face: "young", scale: 1.02 },
     route: [
-      { at: [33, 6.5], dwellMs: 7600, facing: 0, say: "Bendetta. Seventeen. The rest of her is scraped away." },
-      { at: [32, 7.4], dwellMs: 5200, facing: -Math.PI / 2, say: "They asked me one question with three mouths, and wrote down three answers." },
+      { at: [32.9, 5.3], dwellMs: 7600, facing: 0, say: "Bendetta. Seventeen. The rest of her is scraped away." },
+      { at: [31.7, 5.3], dwellMs: 5200, facing: Math.PI, say: "They asked me one question with three mouths, and wrote down three answers." },
     ],
   },
   {
@@ -96,8 +100,8 @@ export const NPCS: readonly NpcDefinition[] = [
     speed: 0.2,
     appearance: { prisoner: true, face: "mature", scale: 0.95 },
     route: [
-      { at: [32.4, 11.5], dwellMs: 8200, facing: 0, say: "The lamp is noon. The wall is a horizon. I have decided this, and it holds." },
-      { at: [33.2, 12.3], dwellMs: 5600, facing: -Math.PI / 2, say: "They cannot come where I have gone. They have not been told the way." },
+      { at: [32.9, 9.3], dwellMs: 8200, facing: 0, say: "The lamp is noon. The wall is a horizon. I have decided this, and it holds." },
+      { at: [31.7, 9.3], dwellMs: 5600, facing: Math.PI, say: "They cannot come where I have gone. They have not been told the way." },
     ],
   },
   {
@@ -107,8 +111,8 @@ export const NPCS: readonly NpcDefinition[] = [
     speed: 0.18,
     appearance: { prisoner: true, face: "elder", scale: 0.97 },
     route: [
-      { at: [32.6, 16.6], dwellMs: 9000, facing: Math.PI },
-      { at: [32.6, 17.3], dwellMs: 6400, facing: 0, say: "I have forgotten what I confessed. I would confess it again if they would tell me what it was." },
+      { at: [32.9, 13.3], dwellMs: 9000, facing: 0 },
+      { at: [31.7, 13.3], dwellMs: 6400, facing: Math.PI, say: "I have forgotten what I confessed. I would confess it again if they would tell me what it was." },
     ],
   },
 ];

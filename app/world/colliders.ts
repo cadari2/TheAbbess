@@ -19,38 +19,65 @@ export type DungeonCollider =
   | { shape: "box"; x: number; z: number; halfX: number; halfZ: number }
   | { shape: "circle"; x: number; z: number; radius: number };
 
+/** Cell gate rows, shared with the renderer's pallets and the door hinges. */
+export const CELL_ROWS = [4, 8, 12, 16, 20, 24] as const;
+
 export const DUNGEON_COLLIDERS: DungeonCollider[] = [
-  { shape: "box", x: 5, z: 25.72, halfX: 2.15, halfZ: 0.16 },
-  { shape: "circle", x: 3.25, z: 24.4, radius: 0.42 },
-  { shape: "box", x: 6.75, z: 24.7, halfX: 0.48, halfZ: 0.48 },
+  // The approach. The door at the player's back is a real solid, not a painted
+  // one: it is here so that walking into it stops you, which is the only way the
+  // first thing the game says about this place gets said at all.
+  { shape: "box", x: 5, z: 34.9, halfX: 0.95, halfZ: 0.12 },
+
+  // The gate hall.
+  { shape: "box", x: 6, z: 26.6, halfX: 2.6, halfZ: 0.18 },
+  { shape: "circle", x: 3.6, z: 24.6, radius: 0.42 },
+  { shape: "box", x: 10.2, z: 24.4, halfX: 0.48, halfZ: 0.48 },
+
+  // The outer office.
   { shape: "box", x: 5.15, z: 19.4, halfX: 1.3, halfZ: 0.62 },
   { shape: "circle", x: 4.35, z: 18.48, radius: 0.4 },
   { shape: "circle", x: 5.95, z: 18.48, radius: 0.4 },
-  { shape: "box", x: 17, z: 7.65, halfX: 1.28, halfZ: 2.78 },
-  { shape: "box", x: 17, z: 10.2, halfX: 1.4, halfZ: 0.9 },
-  { shape: "circle", x: 15.45, z: 5.15, radius: 0.38 },
-  { shape: "circle", x: 15.45, z: 6.45, radius: 0.38 },
-  { shape: "circle", x: 15.45, z: 7.75, radius: 0.38 },
-  { shape: "circle", x: 15.45, z: 9.05, radius: 0.38 },
-  { shape: "circle", x: 17, z: 4.5, radius: 0.38 },
-  { shape: "circle", x: 18.6, z: 9.65, radius: 0.35 },
-  // The three cells. Each pallet lies along its cell's north wall, leaving the
+
+  // The tribunal, turned. The long table now lies along the room's long axis
+  // rather than across it, so the bench sits in one row facing the accused
+  // instead of in a queue down one flank with a wall at its elbow.
+  { shape: "box", x: 16.5, z: 6.5, halfX: 3.6, halfZ: 0.9 },
+  { shape: "box", x: 16.5, z: 4.9, halfX: 1.15, halfZ: 0.8 },
+  { shape: "circle", x: 13.6, z: 5.05, radius: 0.38 },
+  { shape: "circle", x: 15, z: 5.05, radius: 0.38 },
+  { shape: "circle", x: 18, z: 5.05, radius: 0.38 },
+  { shape: "circle", x: 19.4, z: 5.05, radius: 0.38 },
+  { shape: "box", x: 20.9, z: 8.6, halfX: 0.65, halfZ: 0.45 },
+  { shape: "circle", x: 21.9, z: 8.6, radius: 0.38 },
+  { shape: "circle", x: 17.8, z: 9.2, radius: 0.35 },
+
+  // The six cells. Each pallet lies along its cell's north wall, leaving the
   // floor between the pallet and the iron front clear — which is the only part
   // of a cell a prisoner has, and it should be walkable.
-  { shape: "box", x: 32.5, z: 5.5, halfX: 0.85, halfZ: 0.4 },
-  { shape: "circle", x: 33.4, z: 7.5, radius: 0.3 },
-  { shape: "box", x: 32.5, z: 10.5, halfX: 0.85, halfZ: 0.4 },
-  { shape: "box", x: 32.5, z: 15.5, halfX: 0.85, halfZ: 0.4 },
+  ...CELL_ROWS.map((row) => ({
+    shape: "box" as const,
+    x: 32.5,
+    z: row + 0.45,
+    halfX: 0.85,
+    halfZ: 0.35,
+  })),
+
   // The press, moved off the office doorway it used to stand across. At its old
   // seat it left 0.50 of gap where the player needs 0.56, so the wardrobe room's
   // own door was impassable and the room could only be entered from the vault.
   { shape: "box", x: 12.5, z: 21.5, halfX: 0.8, halfZ: 0.45 },
   { shape: "box", x: 12.5, z: 19.6, halfX: 0.8, halfZ: 0.3 },
-  // No collider for the portcullis at 24.15: it hangs raised in the doorway, and
-  // a blocking volume there sealed the Chamber of Groans and the Moon Stair.
-  { shape: "box", x: 27.3, z: 23.1, halfX: 1.28, halfZ: 0.95 },
-  // The surgeon's narrow table, now along the south wall and turned with it.
-  { shape: "box", x: 27.4, z: 24.9, halfX: 1.12, halfZ: 0.58 },
+
+  // The Chamber of Groans, at four times its old floor. The four piers are the
+  // reason the size is usable rather than merely large: a hall ten metres across
+  // with nothing in it is read in one glance from the doorway, and a hall ten
+  // metres across with four columns in it has to be walked.
+  { shape: "box", x: 17.5, z: 27.5, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 22.5, z: 27.5, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 17.5, z: 32.5, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 22.5, z: 32.5, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 19.6, z: 30.2, halfX: 1.28, halfZ: 0.95 },
+  { shape: "box", x: 16.8, z: 33.8, halfX: 1.12, halfZ: 0.58 },
 ];
 
 export function hitsCollider(x: number, z: number, radius = 0.22) {

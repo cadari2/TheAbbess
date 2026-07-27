@@ -246,6 +246,179 @@ cadence and swing amplitude are judged from stills, and headless software WebGL
 runs this scene at about 1fps, so no scripted check watches a figure walk. The
 same limits as Stage A apply to mouse-look feel, audio mix, and touch.
 
+## Stage C (brought forward) — access, layout, light, and eleven more reports
+
+A second round of play produced eleven reports across three messages. Six are
+defects; five are changes, one of which was posed as a question. They are done
+as one unit because they are one unit: the map had to grow to hold a Chamber of
+Groans four times its old size and a gaol with six cells in it, and growing the
+map is also the answer to the sightline question.
+
+### The modules
+
+| Module | What it is |
+| --- | --- |
+| `app/world/doors.ts` | Doors as entities with a state, a leaf, and an arc. Given the player; the NPC simulation still is not. |
+| `app/world/figure.ts` | The body's measurements — hip, knee, ankle, robe, swing — with no dependency on Three, so the suite can do the arithmetic the renderer cannot do on itself. |
+
+### The defects
+
+**Legs through skirts.** The robe was a 0.72m cone from the hips down to 0.20,
+0.262 wide at the hem, over legs swinging 0.52 radians about a hip at 0.82. At
+the knee that puts the leg's surface 0.253 from the axis where the cloth is
+0.224; below the knee the shin is outside the garment for the whole of the lower
+swing. Cloth is not simulated here and cannot be, so the fix is to choose
+geometry that makes the penetration impossible: hem out to 0.30, garment
+shortened to 0.58 so it ends at 0.34, swing reduced to 0.40. `legEscapesRobe`
+re-derives the containment from the constants and the suite asserts it, so a
+later change to any one of the four fails a test instead of putting a knee
+through a cassock again.
+
+**Feet skating.** Found while fixing the above rather than reported. Cadence is
+driven from distance travelled — correctly — but against a stride cycle of
+0.82m that was chosen by hand, where the geometry gives 4·0.82·sin(swing) =
+1.28m. Every figure's feet slid forward at the difference. `STRIDE_CYCLE` is now
+derived from the swing and the leg length, and asserted against them.
+
+**Papers off the table.** They sat at x 15.95 on a table whose west edge was
+15.975, so over half of each sheet hung out over the void, and 21mm above a
+surface they were resting on. Both faults came of eye-positioning from one
+viewpoint. They are now placed from the table's own width, depth and top height.
+
+**A floating chair.** The Inquisitor-General's high chair stood on a dais whose
+south edge was at z 10.90 with the chair's back legs at 11.02 — two corners
+resting on nothing. The dais is now sized so all four legs stand on it.
+
+**A floating rack.** The largest object in the Chamber of Groans had no legs at
+all: a frame of timber at a height of 0.40 with nothing whatever underneath.
+Given four.
+
+**A floating crucifix.** Not reported, found by tightening the audit: it stood
+0.58 above the flagstones on the tribunal's north wall. It now stands on the
+tribunal table, which is where a crucifix in a tribunal belongs anyway — between
+the bench and the accused, at the height of a seated man's face.
+
+**Sticks floating off the wall.** The nail-scratches below Bendetta's wall were
+12mm rods centred 27mm clear of the masonry: nine dowels hanging in the air
+beside the mural. A scratch is not an object near a wall, it is a disturbance of
+one, so each now straddles the wall face — mostly buried, a few millimetres
+proud — and cannot come away from it however the mural later moves.
+
+**A barrel in the wall.** At x 3.25 with a radius of 0.42 it reached to 2.83,
+and the gate hall's floor began at 3.0.
+
+**Rough beds.** The pallet was a slab with fifteen 1.68m rods laid across it,
+ends projecting past the slab into the air on both sides, and a canvas box for a
+pillow: a bundle of dowels, not a bed. It is now a boarded frame with a sagging
+sack in it, short stalks scattered inside the frame's own footprint, and a rolled
+cloak at the head.
+
+**The audit that let four of these through.** `auditFloatingProps` counted a
+piece as supported if any masonry cell fell within 0.12 of its bounding box,
+which meant anything standing *near* a wall was exempt — including a crucifix
+hovering six centimetres off one. The margin is gone; masonry now supports a
+piece only where the piece actually reaches it.
+
+Removing the margin immediately flagged twelve wall-fixed decorations, correctly:
+anything hung on masonry sits a centimetre or two proud of it to keep its faces
+out of the wall's own, so it can never satisfy a "does it reach the floor or the
+stone" test. The two audits now divide the work explicitly. `hang()` declares a
+piece wall-fixed and exempts it from the floating audit, and `checkWallBacking`
+— which already existed — asks the question that actually matters about a hung
+piece, which is whether there is any masonry behind it at all. What must not
+happen is a piece being neither, and that is exactly what the crucifix was: the
+old margin excused it as wall-fixed and nothing had ever declared it hung.
+
+### The changes
+
+**Doors that yield.** The cell gates were built hung permanently open at a fixed
+-1.15 radians. That said the thing the premise wants said — nothing here is
+locked against her — but said it as scenery, once. They are now shut: shut in
+the plan, shut in the collision model, shut on screen, and a player who walks at
+one walks into iron until they are close enough, at which point it swings. No
+prompt and no keypress, because a premise stated by an interaction is a premise
+the player has to agree to perform, and a premise stated by a door already
+moving when they reach it is something that happens to them.
+
+The approach door is the exception that fixes the meaning of the rule:
+`yieldsWithin: null`, and it never opens however long she stands at it. The
+building is not indifferent to her because nothing is locked. It is indifferent
+because she is not who it is locked against.
+
+**The tribunal, turned.** The room is fifteen metres east to west and nine north
+to south; the five-metre table lay across the *short* axis with the whole bench
+queued down one flank of it, each judge's elbow a metre from the west wall and
+the room's entire width empty behind them. The table now lies along the room's
+long axis with the bench in one row facing the accused, the General raised at its
+centre, the secretary at his own desk off the east end, and the accused standing
+in open floor with nothing to either side.
+
+**A way in.** The game used to begin inside itself: the player spawned in the
+gate hall with no account of how they got there, in a room whose every wall led
+further in. There is now six metres of bore with one guttering light in it and a
+shut door behind, and the gate hall is three times its old floor.
+
+**The Chamber of Groans, four times over.** 5×5 to 10×10, with four piers
+carrying the vault. The size and the darkness are one decision: a hall this big
+lit as the old one was would simply be a bigger lit room, and what the name
+promises is that the far end is somewhere you have to go to find out about.
+
+**Six cells, and light that is not the institution's.** Three cells is a set of
+rooms that happen to hold people; what a gaol has that rooms do not is
+repetition. Twenty-four metres of corridor, six identical iron fronts, five lamps
+between them. Three of the six have a grate to the hillside at 3.1m in a 4.2m
+room — high enough to be no use, which is the point of a window in a cell — and
+what comes through it is the wrong colour for everything else in the building.
+
+**Light only from things in the building.** What was here before: an AmbientLight
+at 1.15, a HemisphereLight at 1 — a *sky* term, forty feet underground — and a
+4.6-intensity point light parented to the camera, following the player
+everywhere. Between them they supplied most of the illumination, which is why no
+room was ever dark and why the lamps read as decoration rather than as the reason
+anything was visible. The head lamp was the worst of the three: the cloaked
+stranger carries no light, so a lantern tracking her was the renderer
+contradicting the fiction in every frame. All three are gone. What remains is a
+very low cold floor — the least that keeps unlit stone legible as stone rather
+than as a hole in the screen — and then torches, candles, the grates and the
+moon. Lamp intensity is up by half and lamp reach is down by a third, so a torch
+makes a pool with an edge instead of raising the room evenly.
+
+### Sightlines, and the labyrinth question
+
+Measured rather than judged: the longest clear straight run in the old plan was
+29 cells along row 8 — the tribunal's west door, the tribunal, the bore, the
+corridor and the inside of Maddalena's cell, five compartments on one line, in a
+building whose entire argument is compartmented secrecy.
+
+Four changes, each of which is the same move: never let two doorways share a
+rank.
+
+- The bore to the cells is **bent**. It goes east, turns south for four metres,
+  then east again into the gaol. Nothing along it sees anything else along it.
+- The gate–office doorway moved off the high-lamp passage's column, which had
+  been showing a visitor 22 metres of the building's spine before they had taken
+  a step into it.
+- The office–wardrobe and wardrobe–vault doorways were level with each other,
+  opening one line through the three rooms whose whole point is that each is a
+  secret kept from the last. Dropped a row apart.
+- The vault–groans doorway moved a row off the wardrobe–vault doorway.
+- The eastern range stops a column short of the corridor, so the two meet at a
+  doorway instead of merging into one 19-metre room with a kink in it.
+
+Longest run now: 20 cells, and every run over 15 lies inside a single room. The
+suite asserts it, with the gaoler's corridor exempted by name — its length is the
+one place where seeing all six identical fronts at once is the effect wanted.
+
+### Verification
+
+| What | Result |
+| --- | --- |
+| `node --test tests/world-model.test.mjs` | 28 pass (was 23) |
+| `tests/walkthrough.mjs` | see run log |
+| `npx tsc --noEmit` | clean in `app/`; `db/` and `worker/` unchanged pre-existing |
+| Reachability | every room, and every discovery, reachable from the new spawn |
+| Routes | all seven rounds clear of masonry and props at the figure's own girth |
+
 ## Deviations
 
 Deviations from the agreed plan, with reasoning. Where an edge case forced a
@@ -331,3 +504,28 @@ Set at 7.5 metres on the reasoning that too short is worse than too long. In
 play that carried the outer office's lines into the wardrobe room through an
 open door, which reads as a voice following the player rather than as
 overhearing. Reduced to 5.6.
+
+### C1. The map was replanned, which was posed as a question
+
+"How would you rearrange the map layout" invites a proposal, and a full replan
+on my own authority would answer a question with a fait accompli. What is done
+here is the narrow version: the five doorway offsets and the bent passage above,
+which are the specific fix for the specific measured fault, plus the room
+enlargements that were asked for outright. The building's *topology* is
+unchanged — same rooms, same connections, same order of discovery. A labyrinth
+proper wants loops, dead ends, and more than one way between two places, and
+that is a larger change to make deliberately rather than in passing.
+
+### C2. Stage C was brought forward, and Stages D and F further raided
+
+Doors are Stage C and were planned next, so that much is in order. The layout
+work, the lighting model and the cell range are Stages D and F. The reasoning is
+the same as B1 and so is the mitigation: each change is the narrowest one that
+answers a report, and the loops-and-circulation work of Stage D is untouched.
+
+### C3. Two cells stand empty on purpose
+
+Six cells, four occupied. The empty two are not unfinished: a gaol in which every
+cell has a named prisoner in it is a cast list, and the point of the repetition
+is that most of the slots are just slots. One of them carries a tally of ninety
+days cut by somebody who is no longer in it.
