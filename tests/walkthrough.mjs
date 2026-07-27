@@ -126,6 +126,11 @@ const press = async (key, ms) => {
 // about 0.09 units per frame. Crossing a room takes the better part of a minute.
 // Whether movement and collision are *correct* is settled deterministically in
 // world-model.test.mjs; this only confirms input reaches the running game.
+const bounds = await page.evaluate(async () => {
+  const world = await import("/app/world/index.ts");
+  return { width: world.WORLD_WIDTH, height: world.WORLD_HEIGHT };
+});
+
 const position = async () => {
   await page.keyboard.press("m");
   await page.waitForTimeout(350);
@@ -134,7 +139,14 @@ const position = async () => {
   await page.waitForTimeout(250);
   const left = Number(/left:\s*([\d.]+)%/.exec(style)?.[1]);
   const top = Number(/top:\s*([\d.]+)%/.exec(style)?.[1]);
-  return { x: (left / 100) * 36, y: (top / 100) * 28 };
+  // Scaled by the world's own size, read from the running page. These were the
+  // literals 36 and 28 — the world's size when the harness was written — so the
+  // moment the plan grew to 40x40 every position this reported was wrong by a
+  // different factor on each axis, and reported a spawn in the gate hall that
+  // was really six metres down the approach. The checks compared movement
+  // rather than absolute position and went on passing, which is exactly how a
+  // broken instrument survives: it never disagrees with itself.
+  return { x: (left / 100) * bounds.width, y: (top / 100) * bounds.height };
 };
 
 const before = await position();
@@ -173,6 +185,9 @@ await page.waitForTimeout(300);
 // Visit every discovery via the debug start points plus direct examination, so
 // reachability is exercised in the running game and not only in the model.
 const examined = [];
+// Every start point that stands within examining range of a discovery, so the
+// check exercises the whole record rather than whichever three happened to be
+// close enough.
 for (const start of ["gate", "office", "tribunal", "marcello", "vault", "groans", "moon"]) {
   const target = start ? `${url}/?start=${start}` : url;
   await page.goto(target, { waitUntil: "networkidle" });

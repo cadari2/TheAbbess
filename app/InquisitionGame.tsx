@@ -48,15 +48,15 @@ function initialPlayer() {
   if (typeof window !== "undefined") {
     const start = new URLSearchParams(window.location.search).get("start");
     if (start === "gate") return { x: 6.5, y: 25.6, dir: -Math.PI / 2, pitch: 0 };
-    if (start === "tribunal") return { x: 16.5, y: 10.6, dir: -Math.PI / 2, pitch: 0.06 };
+    if (start === "tribunal") return { x: 16.5, y: 9.8, dir: -Math.PI / 2, pitch: 0.06 };
     if (start === "tribunal-north") return { x: 12.4, y: 7.2, dir: -0.7, pitch: 0.02 };
-    if (start === "office") return { x: 6.4, y: 20.2, dir: -1.9, pitch: 0.02 };
+    if (start === "office") return { x: 5.2, y: 20.4, dir: -1.9, pitch: 0.02 };
     if (start === "cells") return { x: 29, y: 14.5, dir: -Math.PI / 2, pitch: 0 };
-    if (start === "marcello") return { x: 29, y: 5.2, dir: 0, pitch: 0 };
+    if (start === "marcello") return { x: 31.6, y: 5.3, dir: 0, pitch: 0 };
     if (start === "grate") return { x: 29, y: 9.4, dir: 0, pitch: 0.16 };
     if (start === "wardrobe") return { x: 12, y: 19.9, dir: 1.3, pitch: 0 };
     if (start === "vault") return { x: 19.5, y: 22.2, dir: -Math.PI / 2, pitch: 0 };
-    if (start === "groans") return { x: 19.5, y: 26, dir: Math.PI / 2, pitch: 0 };
+    if (start === "groans") return { x: 20, y: 27.2, dir: Math.PI / 2, pitch: 0 };
     if (start === "moon") return { x: 29, y: 33.6, dir: -Math.PI / 2, pitch: 0.12 };
   }
   return { ...SPAWN };
