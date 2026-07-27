@@ -160,11 +160,33 @@ check(
 );
 await page.screenshot({ path: `${outDir}/03-after-walk.png` });
 
-// Collision: drive into the west wall and confirm the player does not leave the
-// building. The gate court's west masonry is at x=2, so x must stay above it.
-await press("a", 6000);
+// Collision: drive west into masonry and confirm the player is still standing
+// somewhere legal.
+//
+// This asserted `wall.y < 27`, which was a coordinate of the old gate court —
+// where the player used to spawn. They now start six metres down the approach
+// at y 33.4 and cannot reach y 27 by strafing at all, so the check could only
+// fail. It went unnoticed because the position readout it was reading was
+// itself mis-scaled, and reported the spawn as being in the gate hall.
+//
+// Rewritten to assert the property rather than the address: whatever the plan
+// does next, driving into a wall must not end with the player inside it, and
+// the approach bore runs x 4..6 so a body of radius 0.28 can never legitimately
+// stand outside 4.28..5.72.
+await press("a", 8000);
 const wall = await position();
-check("collision keeps the player inside", wall.x > 2.5 && wall.y < 27, `at ${wall.x.toFixed(2)},${wall.y.toFixed(2)}`);
+const clear = await page.evaluate(
+  async ([x, y]) => {
+    const world = await import("/app/world/index.ts");
+    return !world.isBlockedAt(world.WORLD_MODEL, x, y);
+  },
+  [wall.x, wall.y],
+);
+check(
+  "collision keeps the player inside",
+  clear && wall.x > 4.2 && wall.x < 5.8,
+  `at ${wall.x.toFixed(2)},${wall.y.toFixed(2)}, ${clear ? "clear of masonry" : "inside masonry"}`,
+);
 await page.screenshot({ path: `${outDir}/04-wall.png` });
 
 // The examine prompt appears near a discovery, and E opens the record.
