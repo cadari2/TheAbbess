@@ -409,6 +409,41 @@ Longest run now: 20 cells, and every run over 15 lies inside a single room. The
 suite asserts it, with the gaoler's corridor exempted by name — its length is the
 one place where seeing all six identical fronts at once is the effect wanted.
 
+### Three faults in the test harness, found by the harness passing
+
+Worth recording separately, because none of them was a fault in the game and all
+three had been invisible for exactly as long as they had existed.
+
+**The position readout was mis-scaled.** It multiplied the map marker's CSS
+percentage by the literals 36 and 28 — the world's size when the harness was
+written. Once the plan grew to 40x40 every coordinate it printed was wrong by a
+different factor on each axis: it reported the spawn at 4.50,23.38 in the gate
+hall when the spawn is 5,33.4, six metres down the approach. It kept passing
+because the movement checks compare two readings rather than absolute position,
+so the error cancelled. That is how a broken instrument survives — by never
+disagreeing with itself.
+
+**The collision check asserted an address.** `wall.y < 27` was a coordinate of
+the old gate court. The player now starts at y 33.4 and cannot reach y 27 by
+strafing sideways, so the check could only fail — and it *had* been failing in
+the run before it was noticed, hidden because the mis-scaled readout put the
+spawn under 27. It now asserts the property instead: after driving into masonry
+the player must not be inside masonry, evaluated against `isBlockedAt` in the
+running page.
+
+**The movement checks were a coin flip.** SwiftShader is fill-rate bound and at
+1280x720 this scene renders at about one frame per second, so a six-second
+key-hold advanced the player by one frame's worth of movement — 0.094 units —
+when it landed a frame at all. Twice running it landed none, and each time a
+*different* one of the two movement checks reported 0.000. The movement section
+now runs at 480x270, a seventh of the pixels, with the full viewport restored
+before anything that takes a picture.
+
+Four of the seven `?start=` points also stood just outside the 2.15m examining
+range — the outer office at 2.22, the tribunal at 2.60 — so a check written to
+exercise the whole record was exercising three sevenths of it. All seven now
+name a different discovery.
+
 ### Verification
 
 | What | Result |

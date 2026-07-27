@@ -121,11 +121,18 @@ const press = async (key, ms) => {
 };
 
 // Position is read from the map marker, the only place the running game exposes
-// it. Distances here are small on purpose: software WebGL renders this scene at
-// roughly 1 fps, and movement is `dt`-capped at 0.04, so a held key advances
-// about 0.09 units per frame. Crossing a room takes the better part of a minute.
-// Whether movement and collision are *correct* is settled deterministically in
-// world-model.test.mjs; this only confirms input reaches the running game.
+// it. Whether movement and collision are *correct* is settled deterministically
+// in world-model.test.mjs; this only confirms input reaches the running game.
+//
+// The movement checks run at a quarter viewport, and have to.
+//
+// SwiftShader is fill-rate bound, and at 1280x720 this scene renders at about
+// one frame per second — so a six-second key-hold advanced the player by one
+// frame's worth of movement, 0.094 units, when it landed a frame at all. Twice
+// running it landed none, and each time a *different* one of the two movement
+// checks reported 0.000: a coin flip dressed as an assertion. 480x270 is a
+// seventh of the pixels and gives frames to spare. The full viewport is restored
+// before anything that takes a picture.
 const bounds = await page.evaluate(async () => {
   const world = await import("/app/world/index.ts");
   return { width: world.WORLD_WIDTH, height: world.WORLD_HEIGHT };
@@ -149,8 +156,10 @@ const position = async () => {
   return { x: (left / 100) * bounds.width, y: (top / 100) * bounds.height };
 };
 
+await page.setViewportSize({ width: 480, height: 270 });
+await page.waitForTimeout(600);
 const before = await position();
-await press("w", 6000);
+await press("w", 4000);
 const after = await position();
 const moved = Math.hypot(after.x - before.x, after.y - before.y);
 check(
@@ -173,7 +182,7 @@ await page.screenshot({ path: `${outDir}/03-after-walk.png` });
 // does next, driving into a wall must not end with the player inside it, and
 // the approach bore runs x 4..6 so a body of radius 0.28 can never legitimately
 // stand outside 4.28..5.72.
-await press("a", 8000);
+await press("a", 4000);
 const wall = await position();
 const clear = await page.evaluate(
   async ([x, y]) => {
@@ -187,6 +196,8 @@ check(
   clear && wall.x > 4.2 && wall.x < 5.8,
   `at ${wall.x.toFixed(2)},${wall.y.toFixed(2)}, ${clear ? "clear of masonry" : "inside masonry"}`,
 );
+await page.setViewportSize({ width: 1280, height: 720 });
+await page.waitForTimeout(600);
 await page.screenshot({ path: `${outDir}/04-wall.png` });
 
 // The examine prompt appears near a discovery, and E opens the record.
