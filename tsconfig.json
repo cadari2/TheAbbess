@@ -9,6 +9,10 @@
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
+    // Lets `app/world/` use explicit `.ts` specifiers, which is what allows the
+    // test suite to import the world model directly under Node's native type
+    // stripping and assert on real behaviour instead of grepping source text.
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",

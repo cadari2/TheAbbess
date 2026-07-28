@@ -37,79 +37,34 @@ test("server-renders the finished literary exploration", async () => {
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
-test("includes the complete playable dungeon and its literary notes", async () => {
-  const [game, worldData, css, packageJson] = await Promise.all([
-    readFile(new URL("../app/InquisitionGame.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/world-data.ts", import.meta.url), "utf8"),
+test("ships no placeholder scaffolding", async () => {
+  const [css, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  for (const place of [
-    "The Prison Gate",
-    "A Familiar’s Dark Chamber",
-    "The Passage of High Lamps",
-    "The Table of the Holy Office",
-    "Bendetta’s Wall",
-    "The Plainer Dungeon",
-    "The Wardrobe Room",
-    "The Masked Official",
-    "The Chamber of Groans",
-    "The Hidden Stair",
-  ]) {
-    assert.match(worldData, new RegExp(place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-
-  assert.match(game, /requestAnimationFrame/);
-  assert.match(game, /DungeonRenderer/);
-  assert.match(game, /requestPointerLock/);
-  assert.match(game, /pointerlockchange/);
-  assert.match(game, /hitsDungeonCollider/);
-  assert.match(game, /Touch controls/);
-  assert.match(game, /THE CLOAKED STRANGER/);
-  assert.match(game, /npcPosition/);
-  assert.match(worldData, /export const NPCS/);
-  assert.match(worldData, /dialogue:/);
-  const world = await readFile(new URL("../app/three-world.ts", import.meta.url), "utf8");
-  assert.match(world, /THREE\.WebGLRenderer/);
-  assert.match(world, /DUNGEON_COLLIDERS/);
-  assert.match(world, /addLimb/);
-  assert.match(world, /MISERICORDIA\s+ET\s+JUSTITIA/);
-  assert.match(world, /stone-wall\.png/);
+  // Accessibility and responsive affordances the exploration depends on.
   assert.match(css, /prefers-reduced-motion/);
   assert.match(css, /@media \(max-width: 760px\), \(pointer: coarse\)/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
 
-test("uses modeled RPG characters instead of portrait cards", async () => {
-  const world = await readFile(new URL("../app/three-world.ts", import.meta.url), "utf8");
-  const characterStart = world.indexOf("function makePerson");
-  const characterEnd = world.indexOf("function makeChair");
-  const character = world.slice(characterStart, characterEnd);
+// The character rig and dungeon geometry are asserted here only where a
+// regression would be invisible in the model tests: that the figures are built
+// as solid volumes with mapped garment and face sheets rather than the flat
+// billboard cards they replaced. Everything spatial is checked behaviourally in
+// world-model.test.mjs instead.
+test("characters are modelled volumes, not portrait cards", async () => {
+  const source = await readFile(new URL("../app/three-world.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export function makePerson");
+  const end = source.indexOf("export function makeChair");
+  assert.ok(start >= 0 && end > start, "makePerson is no longer locatable");
+  const character = source.slice(start, end);
 
-  assert.ok(characterStart >= 0 && characterEnd > characterStart);
-
-  // The face is a curved shell welded to the skull and unwrapped onto the
-  // portrait sheet, not a flat card hovering in front of the head.
-  assert.match(world, /function makeHead/);
-  assert.match(world, /function projectFaceUv/);
   assert.match(character, /makeHead\(materials, skin, faceMaterial/);
-
-  // Garment sheets are mapped onto the body volumes themselves. The old
-  // makeGarmentPanel quads stood proud of the torso as floating slabs.
-  assert.match(world, /function addGarmentVolume/);
   assert.match(character, /addGarmentVolume\(group, garmentMaterial/);
-  assert.doesNotMatch(world, /makeGarmentPanel|makeFaceGeometry/);
-  assert.match(character, /garmentMaterial/);
-  assert.match(character, /materials\.prisonerCloth/);
+  // Flat quads standing proud of the torso, and transparent face cutouts, are
+  // the specific regressions this guards against.
+  assert.doesNotMatch(source, /makeGarmentPanel|makeFaceGeometry/);
   assert.doesNotMatch(character, /CircleGeometry|faceMask|transparent:\s*true/);
-
-  // Collar, neck and head all chain off the top of the torso, so they cannot
-  // drift apart and leave a gap of bare background under the chin.
-  assert.match(character, /const shoulderTopY = torsoY \+ torsoHeight \/ 2/);
-  assert.match(character, /const headY = collarTopY \+/);
-
-  assert.match(world, /familiar\.position\.set\(x,\s*0,\s*18\.64\)/);
-  assert.match(world, /secretary\.position\.set\(17,\s*0,\s*4\.58\)/);
-  assert.match(world, /inquisitor\.position\.set\(15\.45,\s*0,\s*z\)/);
 });
