@@ -23,7 +23,7 @@ export {
   roomNameAt,
   treadsOf,
 } from "./derive.ts";
-export { PLAN, SPAWN, WORLD_HEIGHT, WORLD_WIDTH } from "./plan.ts";
+export { CELL_GATE_ROWS, PLAN, SPAWN, UPPER_FLOOR, WORLD_HEIGHT, WORLD_WIDTH } from "./plan.ts";
 export {
   NPC_RADIUS,
   createNpcStates,
@@ -48,11 +48,14 @@ export { EARSHOT, overheardAt, type Overheard } from "./earshot.ts";
 export { DISCOVERIES, misplacedDiscoveries, type Discovery } from "./discoveries.ts";
 export {
   DOORS,
+  MOON_KEY,
   createDoorStates,
   doorBlocksAt,
   doorLeafEnd,
+  lockedDoorNear,
   updateDoors,
   type DoorDefinition,
+  type DoorLeaf,
   type DoorState,
 } from "./doors.ts";
 export {

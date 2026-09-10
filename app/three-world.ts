@@ -6,6 +6,7 @@ import {
   ROBE,
   STRIDE_CYCLE,
   NPCS,
+  UPPER_FLOOR,
   WORLD_MODEL,
   createDoorStates,
   createNpcStates,
@@ -27,7 +28,12 @@ export type PlayerView = {
 
 type Grid = string[][];
 
-const WALL_HEIGHT = 4.2;
+/**
+ * The vault. Ireland's passages are lofty and his cells narrow *and* lofty;
+ * at 4.2 neither was, and a three-metre corridor under a 4.2 ceiling is a
+ * culvert. Everything hung from the ceiling reads this rather than a literal.
+ */
+const WALL_HEIGHT = 5.4;
 const EYE_HEIGHT = 1.62;
 
 export {
@@ -163,8 +169,8 @@ const CHARACTER_FRAGMENT = /* glsl */ `
 
     vec3 irradiance = fill;
 
+    vec3 viewPosition = - vViewPosition;
     #if NUM_POINT_LIGHTS > 0
-      vec3 viewPosition = - vViewPosition;
       for ( int i = 0; i < NUM_POINT_LIGHTS; i ++ ) {
         vec3 toLight = pointLights[ i ].position - viewPosition;
         float lightDistance = length( toLight );
@@ -176,6 +182,28 @@ const CHARACTER_FRAGMENT = /* glsl */ `
         // this large steps the whole side of a face to fill in one edge.
         float lambert = saturate( ( dot( normal, direction ) + wrap ) / ( 1.0 + wrap ) );
         irradiance += pointLights[ i ].color * attenuation * lambert;
+      }
+    #endif
+
+    // The moon. It reaches the cells through their gratings and the garden
+    // through nothing at all, and it is a spot light, which the point-light
+    // loop above cannot see: a prisoner standing in a bar of moonlight was
+    // lit by the corridor's lamps and nothing else. Same wrapped Lambert, with
+    // Three's own cone falloff in front of it.
+    #if NUM_SPOT_LIGHTS > 0
+      for ( int i = 0; i < NUM_SPOT_LIGHTS; i ++ ) {
+        vec3 toLight = spotLights[ i ].position - viewPosition;
+        float lightDistance = length( toLight );
+        vec3 direction = toLight / max( lightDistance, 1e-4 );
+        float angleCos = dot( direction, spotLights[ i ].direction );
+        float cone = smoothstep( spotLights[ i ].coneCos, spotLights[ i ].penumbraCos, angleCos );
+        if ( cone > 0.0 ) {
+          float attenuation = cone * charFalloff(
+            lightDistance, spotLights[ i ].distance, spotLights[ i ].decay
+          );
+          float lambert = saturate( ( dot( normal, direction ) + wrap ) / ( 1.0 + wrap ) );
+          irradiance += spotLights[ i ].color * attenuation * lambert;
+        }
       }
     #endif
 
@@ -1676,21 +1704,6 @@ function makeMuralTexture() {
   });
 }
 
-function makeInscriptionTexture() {
-  return makeCanvasTexture(1024, 180, (ctx, w, h) => {
-    ctx.fillStyle = "#24140f";
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = "#6a3d2b";
-    ctx.lineWidth = 12;
-    ctx.strokeRect(8, 8, w - 16, h - 16);
-    ctx.font = "52px Georgia";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#c0a276";
-    ctx.fillText("MISERICORDIA  ET  JUSTITIA", w / 2, h / 2);
-  });
-}
-
 /**
  * Builds every material the dungeon and its inhabitants use. Exported so the
  * character lab can inspect the same materials the game ships.
@@ -1724,9 +1737,14 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     return texture;
   };
 
-  const stoneTexture = load("/textures/stone-wall.png", 1.05, 2.1);
-  const floorTexture = load("/textures/flagstone-floor.png", 12, 9);
-  const woodTexture = load("/textures/chestnut-panels.png", 1, 1.2);
+  // The wall sheet tiles once across a block and 2.1 times up a 4.2 block; the
+  // vault is now 5.4, so the vertical repeat rises with it and the courses
+  // keep the same size.
+  const stoneTexture = load("/textures/stone-wall.png", 1.05, 2.1 * (WALL_HEIGHT / 4.2));
+  // Sized off the world rather than typed: the flagstones are 3.3 cells to a
+  // repeat, whatever the plan's extent.
+  const floorTexture = load("/textures/flagstone-floor.png", WORLD_MODEL.width * 0.3, WORLD_MODEL.height * 0.3);
+  const woodTexture = load("/textures/chestnut-panels.png", 1, 1.2 * (WALL_HEIGHT / 4.2));
   // A second, tighter tiling of the same sheet for furniture. Tables and chairs
   // were flat untinted colour and read as orange plastic under the lamps.
   const furnitureWoodTexture = load("/textures/chestnut-panels.png", 2.4, 2.4);
@@ -1769,6 +1787,73 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
   clothTexture.repeat.set(2.5, 4);
   textures.push(clothTexture);
 
+  // Turf for the garden: a mottled dark green, painted rather than loaded,
+  // because nothing in the shipped sheets is anything but stone and wood.
+  const turfTexture = makeCanvasTexture(512, 512, (ctx, w, h) => {
+    ctx.fillStyle = "#2f3a24";
+    ctx.fillRect(0, 0, w, h);
+    let seed = 91;
+    const random = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    for (let i = 0; i < 2600; i++) {
+      const g = 40 + random() * 40;
+      ctx.fillStyle = `rgba(${g * 0.7 | 0},${g | 0},${g * 0.45 | 0},${0.25 + random() * 0.4})`;
+      ctx.beginPath();
+      ctx.ellipse(random() * w, random() * h, 3 + random() * 9, 2 + random() * 5, random() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 900; i++) {
+      ctx.strokeStyle = `rgba(${60 + random() * 40 | 0},${90 + random() * 50 | 0},${40 + random() * 20 | 0},${0.3 + random() * 0.4})`;
+      ctx.lineWidth = 1 + random();
+      const x = random() * w;
+      const y = random() * h;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (random() - 0.5) * 8, y - 4 - random() * 8);
+      ctx.stroke();
+    }
+  });
+  turfTexture.wrapS = turfTexture.wrapT = THREE.RepeatWrapping;
+  turfTexture.repeat.set(4, 6);
+  textures.push(turfTexture);
+
+  // The night sky: a gradient from a bruised horizon to near-black overhead,
+  // with stars. Seen only from the lane and the garden, through the one gap in
+  // the vault.
+  const skyTexture = makeCanvasTexture(1024, 512, (ctx, w, h) => {
+    const gradient = ctx.createLinearGradient(0, 0, 0, h);
+    gradient.addColorStop(0, "#02030a");
+    gradient.addColorStop(0.45, "#070b1a");
+    gradient.addColorStop(0.72, "#101a30");
+    gradient.addColorStop(1, "#1a2436");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+    let seed = 7;
+    const random = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    for (let i = 0; i < 1400; i++) {
+      const x = random() * w;
+      const y = random() * h * 0.78;
+      const r = random() < 0.08 ? 1.6 : 0.8;
+      ctx.fillStyle = `rgba(${200 + random() * 55 | 0},${205 + random() * 40 | 0},${230 + random() * 25 | 0},${0.35 + random() * 0.65})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Thin cloud across the lower sky.
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = `rgba(120,130,160,${0.02 + random() * 0.04})`;
+      ctx.beginPath();
+      ctx.ellipse(random() * w, h * (0.5 + random() * 0.3), 120 + random() * 200, 8 + random() * 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  textures.push(skyTexture);
+
   // The garment and portrait sheets are painted art that already carries its
   // own light and shade. A near-neutral tint preserves that detail; the old
   // dark tints multiplied it down until only a silhouette survived.
@@ -1795,7 +1880,17 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     }),
     brownStone: new THREE.MeshStandardMaterial({
       map: stoneTexture,
+      bumpMap: stoneTexture,
+      bumpScale: 0.03,
       color: "#8d7869",
+      roughness: 1,
+    }),
+    // Garden walls, the same stone gone grey and cold under the moon.
+    gardenStone: new THREE.MeshStandardMaterial({
+      map: stoneTexture,
+      bumpMap: stoneTexture,
+      bumpScale: 0.04,
+      color: "#7d8088",
       roughness: 1,
     }),
     woodPanel: new THREE.MeshStandardMaterial({
@@ -1814,9 +1909,21 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     }),
     ceiling: new THREE.MeshStandardMaterial({
       map: stoneTexture,
-      color: "#63594b",
+      color: "#5c5346",
       roughness: 1,
       side: THREE.DoubleSide,
+    }),
+    turf: new THREE.MeshStandardMaterial({
+      map: turfTexture,
+      bumpMap: turfTexture,
+      bumpScale: 0.02,
+      color: "#9aa58a",
+      roughness: 1,
+    }),
+    gravel: new THREE.MeshStandardMaterial({
+      map: floorTexture,
+      color: "#8f8a80",
+      roughness: 1,
     }),
     wood: new THREE.MeshStandardMaterial({
       map: furnitureWoodTexture,
@@ -1890,6 +1997,25 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
     scratch: standard("#6f6355", 1),
     wax: standard("#b69a6c", 0.9),
     flame: new THREE.MeshBasicMaterial({ color: "#ffd078" }),
+    // Cypress foliage and bark: nearly black under the moon, which is what a
+    // cypress is for.
+    cypress: standard("#182116", 1),
+    bark: standard("#2e241a", 1),
+    // Still water, the one glossy surface in the building. It is here to hold
+    // the moon.
+    water: new THREE.MeshStandardMaterial({
+      color: "#0d1622",
+      roughness: 0.12,
+      metalness: 0.4,
+      emissive: "#0b1420",
+      emissiveIntensity: 0.6,
+    }),
+    // The sky and the moon are unlit and unfogged: they are the far side of the
+    // one opening in the vault, and fog would grey them into the masonry.
+    sky: new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, fog: false }),
+    moon: new THREE.MeshBasicMaterial({ color: "#e9eefb", fog: false }),
+    // What a grating is seen against from inside: a flat cold brightness.
+    moonPane: new THREE.MeshBasicMaterial({ color: "#aebfdc", fog: false }),
   };
 
   // Paper dresses both a cleric's throat bands and the documents on the
@@ -1901,6 +2027,186 @@ export function createDungeonMaterials(renderer: THREE.WebGLRenderer) {
 
   return { materials, textures };
 }
+
+/**
+ * A lamp on an iron bracket, fixed to a wall.
+ *
+ * The hanging lamps are the institution's: they light rooms. A bracket lamp is
+ * somebody's — the gaoler's, the watcher's, a prisoner's — and lights the two
+ * metres around it and nothing else. `facing` is the direction the bracket
+ * projects from the wall.
+ */
+function makeBracketLamp(
+  materials: Record<string, THREE.Material>,
+  x: number,
+  y: number,
+  z: number,
+  facing: [number, number],
+  intensity: number,
+  colour: THREE.ColorRepresentation = "#f0a85a",
+) {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  group.rotation.y = Math.atan2(-facing[1], facing[0]);
+  // The arm out from the wall, a bracket down to it, the cup, the flame.
+  addBox(group, materials.iron, [0.34, 0.03, 0.03], [0.17, 0, 0]);
+  addBox(group, materials.iron, [0.03, 0.26, 0.03], [0.02, -0.13, 0]);
+  addBox(group, materials.iron, [0.2, 0.03, 0.03], [0.1, -0.22, 0], [0, 0, 0.6]);
+  addCylinder(group, materials.iron, 0.07, 0.045, 0.09, [0.3, -0.03, 0], [0, 0, 0], 8);
+  const flame = mesh(new THREE.SphereGeometry(0.05, 8, 6), materials.flame, false);
+  flame.scale.set(0.7, 1.5, 0.7);
+  flame.position.set(0.3, 0.06, 0);
+  group.add(flame);
+  const light = new THREE.PointLight(colour, intensity * 13, 5.5, 1.6);
+  light.position.set(0.3, 0.1, 0);
+  group.add(light);
+  group.traverse((item) => {
+    if ((item as THREE.Mesh).isMesh && item !== flame) (item as THREE.Mesh).castShadow = false;
+  });
+  return { group, light, flame };
+}
+
+/** A long iron key: bow, shaft, bit. Hangs from its bow. */
+function makeKey(materials: Record<string, THREE.Material>) {
+  const key = new THREE.Group();
+  const bow = mesh(new THREE.TorusGeometry(0.045, 0.011, 8, 16), materials.iron);
+  key.add(bow);
+  addCylinder(key, materials.iron, 0.011, 0.011, 0.2, [0, -0.145, 0], [0, 0, 0], 8);
+  addBox(key, materials.iron, [0.035, 0.05, 0.012], [0.02, -0.225, 0]);
+  addBox(key, materials.iron, [0.02, 0.025, 0.012], [0.028, -0.19, 0]);
+  return key;
+}
+
+/**
+ * The gaoler's board: six keys on six nails over six cut numbers, and a
+ * seventh nail with nothing on it.
+ */
+function makeKeyBoard(materials: Record<string, THREE.Material>) {
+  const board = new THREE.Group();
+  addBox(board, materials.woodTrim, [1.2, 0.5, 0.04], [0, 0, 0]);
+  for (let i = 0; i < 7; i++) {
+    const x = -0.51 + i * 0.17;
+    addCylinder(board, materials.iron, 0.008, 0.008, 0.06, [x, 0.14, 0.04], [Math.PI / 2, 0, 0], 6);
+    if (i < 6) {
+      const key = makeKey(materials);
+      key.scale.setScalar(0.75);
+      key.position.set(x, 0.1, 0.06);
+      key.rotation.z = (i % 2 ? 1 : -1) * 0.08;
+      board.add(key);
+    }
+    // The numbers are strokes cut into the wood, not text: I, II, III...
+    const strokes = i < 6 ? i + 1 : 0;
+    for (let s = 0; s < strokes; s++) {
+      addBox(board, materials.scratch, [0.008, 0.06, 0.006], [x - 0.03 + s * 0.012, -0.17, 0.02]);
+    }
+  }
+  // Under the bare nail, a crescent scratched by somebody who knew what was
+  // missing from it.
+  const crescent = mesh(new THREE.TorusGeometry(0.03, 0.005, 6, 12, Math.PI * 1.2), materials.scratch);
+  crescent.position.set(0.51, -0.17, 0.022);
+  crescent.rotation.z = -Math.PI * 0.6;
+  board.add(crescent);
+  return board;
+}
+
+/**
+ * A cypress: a trunk and a tapering column of dark foliage, nearly black.
+ *
+ * Three overlapping ellipsoids rather than a stack of cones. Cones stack into
+ * a fir tree with visible tiers; a cypress is one flame-shaped mass with no
+ * edge anywhere on it, and reads at night entirely by silhouette.
+ */
+function makeCypress(materials: Record<string, THREE.Material>, height = 6.5) {
+  const tree = new THREE.Group();
+  addCylinder(tree, materials.bark, 0.09, 0.14, 0.9, [0, 0.45, 0], [0, 0, 0], 8);
+  const parts: [number, number, number, number][] = [
+    // centre height as a fraction of the tree, radius, vertical stretch, lean
+    [0.34, 0.62, 2.4, 0],
+    [0.6, 0.5, 2.6, 0.03],
+    [0.86, 0.3, 2.2, -0.02],
+  ];
+  for (const [at, radius, stretch, lean] of parts) {
+    const mass = mesh(new THREE.SphereGeometry(radius, 10, 8), materials.cypress);
+    mass.scale.set(1, stretch, 0.92);
+    mass.position.set(lean, 0.6 + at * (height - 0.6), 0);
+    tree.add(mass);
+  }
+  const tip = mesh(new THREE.ConeGeometry(0.14, 0.9, 7), materials.cypress);
+  tip.position.set(0, height + 0.15, 0);
+  tree.add(tip);
+  return tree;
+}
+
+/** A stone basin with still water in it. */
+function makeBasin(materials: Record<string, THREE.Material>) {
+  const basin = new THREE.Group();
+  addCylinder(basin, materials.gardenStone, 1.1, 1.0, 0.16, [0, 0.08, 0], [0, 0, 0], 16);
+  addCylinder(basin, materials.gardenStone, 1.05, 1.1, 0.5, [0, 0.41, 0], [0, 0, 0], 16);
+  const rim = mesh(new THREE.TorusGeometry(1.0, 0.08, 8, 24), materials.gardenStone);
+  rim.position.set(0, 0.66, 0);
+  rim.rotation.x = Math.PI / 2;
+  basin.add(rim);
+  const water = mesh(new THREE.CircleGeometry(0.94, 24), materials.water, false);
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(0, 0.6, 0);
+  basin.add(water);
+  // A small pedestal in the middle, for the moon to sit beside.
+  addCylinder(basin, materials.gardenStone, 0.1, 0.13, 0.9, [0, 0.9, 0], [0, 0, 0], 8);
+  const cup = mesh(new THREE.SphereGeometry(0.16, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), materials.gardenStone);
+  cup.position.set(0, 1.34, 0);
+  cup.rotation.x = Math.PI;
+  basin.add(cup);
+  return basin;
+}
+
+function makeInscriptionTexture() {
+  return makeCanvasTexture(1024, 180, (ctx, w, h) => {
+    ctx.fillStyle = "#24140f";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "#6a3d2b";
+    ctx.lineWidth = 12;
+    ctx.strokeRect(8, 8, w - 16, h - 16);
+    ctx.font = "52px Georgia";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#c0a276";
+    ctx.fillText("MISERICORDIA  ET  JUSTITIA", w / 2, h / 2);
+  });
+}
+
+/**
+ * A soft round sprite for a mote of dust: bright at the centre, gone at the
+ * edge, so a point drawn with it reads as a speck rather than a square.
+ */
+function makeMoteTexture() {
+  return makeCanvasTexture(32, 32, (ctx, w, h) => {
+    const gradient = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.4, "rgba(255,255,255,0.5)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+/** A gradient for a shaft of light: bright where it enters, gone at the floor. */
+function makeShaftTexture() {
+  return makeCanvasTexture(8, 128, (ctx, w, h) => {
+    const gradient = ctx.createLinearGradient(0, 0, 0, h);
+    gradient.addColorStop(0, "rgba(255,255,255,0.9)");
+    gradient.addColorStop(0.5, "rgba(255,255,255,0.45)");
+    gradient.addColorStop(1, "rgba(255,255,255,0.0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+/** A moonlit thing: the window a cell has, the light that comes through it, and the dust it shows. */
+type MoonShaft = {
+  motes: THREE.Points;
+  bounds: { x: number; y: number; z: number; sx: number; sy: number; sz: number };
+  velocities: Float32Array;
+};
 
 export class DungeonRenderer {
   private renderer: THREE.WebGLRenderer;
@@ -1923,9 +2229,23 @@ export class DungeonRenderer {
    */
   readonly npcStates: NpcState[] = createNpcStates(NPCS);
   readonly doorStates: DoorState[] = createDoorStates(DOORS);
-  private gateLeaves = new Map<string, THREE.Group>();
+  private doorLeaves = new Map<string, THREE.Group>();
   /** Stride phase per figure, advanced by distance walked rather than by time. */
   private stride = new Map<string, { phase: number; travelled: number; blend: number }>();
+  /** Things that can be taken, by discovery id, so a key can leave its nail. */
+  private takeable = new Map<string, THREE.Object3D>();
+  private shafts: MoonShaft[] = [];
+  /** The demon's pupils, and the cell they watch. */
+  private pupils: { mesh: THREE.Mesh; restX: number; restY: number }[] = [];
+  private spider: { mesh: THREE.Group; from: THREE.Vector3; to: THREE.Vector3 } | null = null;
+  private water: THREE.Mesh | null = null;
+  /**
+   * Cells of the wall grid that are not instanced as whole blocks because a
+   * window is cut through them; `buildMoonWindows` builds their masonry in
+   * pieces around the hole.
+   */
+  private pierced = new Set<string>();
+  private frame = 0;
 
   constructor(canvas: HTMLCanvasElement, world: Grid) {
     this.world = world;
@@ -1942,51 +2262,49 @@ export class DungeonRenderer {
     this.renderer.toneMappingExposure = 1.02;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    // PCFSoftShadowMap is deprecated in this version of Three and silently
-    // resolves to PCFShadowMap anyway; naming it outright stops a per-run
-    // warning that was burying the dungeon's own diagnostics.
+    // Twelve lights cast shadows now — the moon through six gratings, the moon
+    // in the garden, the lane and the door, and three lamps — and each shadow
+    // map is a pass over the scene. Nothing that casts moves faster than a
+    // walking figure, so the maps are refreshed on alternate frames.
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
 
     this.scene.background = new THREE.Color("#040403");
     // Linear fog over a fixed range reads like Morrowind's draw distance; the
-    // old exponential falloff swallowed the far wall of every room. Pulled in
-    // and darkened with the rest of the lighting: at 9-34 over a near-black room
-    // the fog was brighter than the masonry and lit the far wall grey.
-    this.scene.fog = new THREE.Fog("#080605", 7, 26);
-    this.camera = new THREE.PerspectiveCamera(72, 1, 0.05, 60);
+    // old exponential falloff swallowed the far wall of every room.
+    this.scene.fog = new THREE.Fog("#080605", 7, 28);
+    // Far enough to see the sky dome from the garden. It was 60, which is a
+    // fine draw distance for a cellar and a poor one for the moon.
+    this.camera = new THREE.PerspectiveCamera(72, 1, 0.05, 400);
 
     const built = createDungeonMaterials(this.renderer);
     this.materials = built.materials;
     this.disposableTextures.push(...built.textures);
 
+    // The windows are cut before the walls are laid, so the wall builder knows
+    // which blocks not to instance.
+    for (const row of CELL_ROWS) {
+      this.pierced.add(`45,${row + 1}`);
+      this.pierced.add(`46,${row + 1}`);
+    }
+
     this.buildArchitecture(world);
+    this.buildSky();
     this.buildRooms();
+    this.buildMoonWindows();
+    this.buildGarden();
     this.buildPatrols();
     this.auditFloatingProps();
 
-    // Everything that lights this building is now something in it.
-    //
-    // What was here before: a warm AmbientLight at 1.15, a HemisphereLight at 1
-    // — a *sky* term, forty feet underground — and a 4.6-intensity point light
-    // parented to the camera, following the player everywhere. Between them they
-    // supplied most of the illumination in the game, which is why no room was
-    // ever dark and why the lamps read as decoration rather than as the reason
-    // anything was visible. The head lamp was the worst of the three: the
-    // cloaked stranger carries no light, so a lantern that tracked her was the
-    // renderer contradicting the fiction in every frame, and it flattened every
-    // face she walked up to.
-    //
-    // All three are gone. What remains is a very low, cold floor — the least
-    // that keeps unlit stone legible as stone rather than as a hole in the
-    // screen — and then torches, candles and the moon.
-    this.scene.add(new THREE.AmbientLight("#161b23", 0.5));
+    // Everything that lights this building is something in it: torches,
+    // candles, and the moon. What remains besides is a very low, cold floor —
+    // the least that keeps unlit stone legible as stone rather than as a hole
+    // in the screen.
+    this.scene.add(new THREE.AmbientLight("#1a2030", 0.62));
     this.scene.add(this.camera);
   }
 
   private buildArchitecture(world: Grid) {
-    // Sized from the model rather than from two literals. They were 36x28 at
-    // (18,14) — the world's size when they were written — so the first plan that
-    // grew past those bounds would have laid rooms over the edge of their own
-    // floor.
     const spanX = this.model.width;
     const spanZ = this.model.height;
     const floor = mesh(new THREE.PlaneGeometry(spanX, spanZ), this.materials.floor);
@@ -1996,17 +2314,53 @@ export class DungeonRenderer {
     floor.castShadow = false;
     this.scene.add(floor);
 
-    const ceiling = mesh(new THREE.PlaneGeometry(spanX, spanZ), this.materials.ceiling, false);
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.set(spanX / 2, WALL_HEIGHT, spanZ / 2);
+    // The ceiling is laid a cell at a time rather than as one plane over the
+    // whole world, because the lane and the garden have none: the one thing the
+    // stair is climbed for is the sky, and a plane across the world puts a
+    // vault over it. Each tile casts, so the moon above the roof cannot reach
+    // the rooms beneath it.
+    const openAir = new Set<string>();
+    for (const room of this.model.rooms) {
+      if (!room.openAir) continue;
+      for (let y = room.y1; y <= room.y2; y++) {
+        for (let x = room.x1; x <= room.x2; x++) openAir.add(`${x},${y}`);
+      }
+    }
+    const tiles: [number, number][] = [];
+    world.forEach((row, z) =>
+      row.forEach((cell, x) => {
+        if (cell === "0" && !openAir.has(`${x},${z}`)) tiles.push([x, z]);
+      }),
+    );
+    const tileGeometry = new THREE.PlaneGeometry(1.002, 1.002);
+    tileGeometry.rotateX(Math.PI / 2);
+    const ceiling = new THREE.InstancedMesh(tileGeometry, this.materials.ceiling, tiles.length);
+    const tileMatrix = new THREE.Matrix4();
+    tiles.forEach(([x, z], i) => {
+      tileMatrix.makeTranslation(x + 0.5, WALL_HEIGHT, z + 0.5);
+      ceiling.setMatrixAt(i, tileMatrix);
+    });
+    ceiling.castShadow = true;
+    ceiling.receiveShadow = false;
     this.scene.add(ceiling);
 
-    const types = ["1", "2", "3", "4"];
+    const gardenCells = new Set<string>();
+    const garden = this.model.rooms.find((room) => room.id === "garden");
+    const lanes = this.model.rooms.filter((room) => room.openAir);
+    for (const room of lanes) {
+      for (let y = room.y1 - 1; y <= room.y2 + 1; y++) {
+        for (let x = room.x1 - 1; x <= room.x2 + 1; x++) gardenCells.add(`${x},${y}`);
+      }
+    }
+    void garden;
+
+    const types = ["1", "2", "3", "4", "g"];
     const wallMaterials = [
       this.materials.stone,
       this.materials.woodPanel,
       this.materials.cellStone,
       this.materials.brownStone,
+      this.materials.gardenStone,
     ];
     types.forEach((type, typeIndex) => {
       const positions: [number, number][] = [];
@@ -2015,10 +2369,18 @@ export class DungeonRenderer {
           // A screened cell keeps its masonry in the collision grid and loses it
           // in the architecture: `buildCellFronts` puts a sill, a lintel and a
           // field of bars there instead. Instancing a stone block here too would
-          // wall the bars up from behind.
-          if (cell === type && !isScreenAt(this.model, x, z)) positions.push([x, z]);
+          // wall the bars up from behind. A pierced cell likewise: the window
+          // builder lays its masonry in pieces around the hole.
+          if (cell === "0") return;
+          if (isScreenAt(this.model, x, z) || this.pierced.has(`${x},${z}`)) return;
+          // Masonry that bounds the open-air rooms is drawn in the garden's own
+          // grey, whatever the plan calls it, so the moonlit walls read as one
+          // enclosure.
+          const outdoor = gardenCells.has(`${x},${z}`);
+          if (type === "g" ? outdoor : cell === type && !outdoor) positions.push([x, z]);
         }),
       );
+      if (positions.length === 0) return;
       const geometry = new THREE.BoxGeometry(1.002, WALL_HEIGHT, 1.002);
       const instanced = new THREE.InstancedMesh(geometry, wallMaterials[typeIndex], positions.length);
       const matrix = new THREE.Matrix4();
@@ -2031,23 +2393,46 @@ export class DungeonRenderer {
       this.scene.add(instanced);
     });
 
+    // Transverse ribs under the vault of the larger roofed rooms and along the
+    // high-lamp passage, so a 5.4m ceiling reads as built rather than as a lid.
     const ribMaterial = standard("#332a21", 1);
-    for (const z of [4.25, 7.6, 10.95]) {
-      // Shallow transverse ribs imply the vault without sweeping freestanding
-      // torus geometry through the people and furniture below.
-      addBox(this.scene, ribMaterial, [13.6, 0.12, 0.16], [17, 4.08, z]);
-    }
+    const rib = (x: number, z: number, length: number, axis: "x" | "z") => {
+      const size: [number, number, number] = axis === "x" ? [length, 0.14, 0.18] : [0.18, 0.14, length];
+      addBox(this.scene, ribMaterial, size, [x, WALL_HEIGHT - 0.07, z]);
+    };
+    for (const z of [4.2, 7.1, 10]) rib(22.5, z, 13.6, "x");
+    for (const z of [19.5, 22, 24.5, 27]) rib(5.5, z, 2.6, "x");
+    for (const x of [6.5, 9]) rib(x, 17, 1.6, "z");
+    for (const z of [11, 13.5]) rib(11.5, z, 2.6, "x");
+    for (const z of [36.5, 40, 43.5]) rib(31.5, z, 11.6, "x");
+    for (const z of [6, 12, 18, 24]) rib(38.5, z, 2.6, "x");
+  }
+
+  /** The sky, seen through the one gap in the vault, and the moon in it. */
+  private buildSky() {
+    const dome = mesh(new THREE.SphereGeometry(140, 32, 18), this.materials.sky, false);
+    dome.position.set(this.model.width / 2, 0, this.model.height / 2);
+    dome.rotation.y = Math.PI / 2;
+    this.scene.add(dome);
+    // The moon stands east and high: the cell gratings face east, and the
+    // moon is what comes through them.
+    const moon = mesh(new THREE.CircleGeometry(4.2, 32), this.materials.moon, false);
+    moon.position.set(115, 62, 40);
+    moon.lookAt(52, 2, 21);
+    this.scene.add(moon);
+    const halo = mesh(
+      new THREE.CircleGeometry(9, 32),
+      new THREE.MeshBasicMaterial({ color: "#7d8db0", transparent: true, opacity: 0.16, fog: false, depthWrite: false }),
+      false,
+    );
+    halo.position.copy(moon.position).add(new THREE.Vector3(-1.5, -0.8, -0.5));
+    halo.lookAt(52, 2, 21);
+    this.scene.add(halo);
   }
 
   /**
    * Verifies that a wall-mounted piece has masonry behind it across its whole
    * width, and reports the gaps if it does not.
-   *
-   * Every room wall here is pierced by at least one doorway. A panel positioned
-   * by eye from the middle of a room looks mounted from that one viewpoint and
-   * then, from any other, is discovered hanging in the opening with the far
-   * room visible behind it. Knowing a decoration's inner face is at the cell
-   * boundary is not enough on its own; the cells it spans have to be solid too.
    *
    * `span` runs along `spanAxis`; `facing` is the direction along the other
    * horizontal axis that the piece's front points, so the masonry is sampled
@@ -2104,6 +2489,19 @@ export class DungeonRenderer {
     });
   }
 
+  private addBracket(
+    x: number,
+    y: number,
+    z: number,
+    facing: [number, number],
+    intensity: number,
+    colour = "#f0a85a",
+  ) {
+    const lamp = makeBracketLamp(this.materials, x, y, z, facing, intensity, colour);
+    this.scene.add(this.hang(lamp.group));
+    this.lamps.push({ light: lamp.light, flame: lamp.flame, base: lamp.light.intensity, seed: x * 0.91 + z * 1.13 });
+  }
+
   private buildRooms() {
     const m = this.materials;
 
@@ -2112,50 +2510,55 @@ export class DungeonRenderer {
     // Six metres of bore with one guttering light in it, and behind the player a
     // shut door that is a real solid and never becomes anything else. It is the
     // first thing in the game and it is deliberately the only thing: no props,
-    // no figure, nothing to examine. What the room has to say it says by being
-    // long, narrow, dark, and closed at one end.
-    const approachDoor = addBox(this.scene, m.woodTrim, [1.9, 2.6, 0.16], [5, 1.3, 34.92]);
+    // no figure, nothing to examine.
+    const approachDoor = addBox(this.scene, m.woodTrim, [1.9, 2.8, 0.16], [6, 1.4, 48.92]);
     approachDoor.castShadow = true;
-    for (const y of [0.5, 1.3, 2.1]) {
-      addBox(approachDoor, m.iron, [1.86, 0.11, 0.06], [0, y - 1.3, -0.11]);
+    for (const y of [0.5, 1.4, 2.3]) {
+      addBox(approachDoor, m.iron, [1.86, 0.11, 0.06], [0, y - 1.4, -0.11]);
     }
-    addCylinder(this.scene, m.iron, 0.06, 0.06, 0.22, [5.62, 1.24, 34.78], [Math.PI / 2, 0, 0], 8);
-    this.checkWallBacking("approach door", 5, 35, "x", 1.9, -1);
-    this.addLamp(5, 30.4, 3.1, 0.85);
+    addCylinder(this.scene, m.iron, 0.06, 0.06, 0.22, [6.62, 1.3, 48.78], [Math.PI / 2, 0, 0], 8);
+    this.checkWallBacking("approach door", 6, 49, "x", 1.9, -1);
+    this.addLamp(6, 45.4, 3.6, 0.85);
 
-    // Prison gate: the raised portcullis over the way in, the clerk's counter
-    // across the hall, and stores against the walls.
+    // The prison gate: the raised portcullis over the way in, the clerk's
+    // counter across the hall, and stores against the walls.
     const gate = makePortcullis(m);
-    gate.position.set(5, 1.95, 27.62);
+    gate.position.set(6, 2.4, 43.6);
+    gate.scale.set(0.55, 1, 1);
     this.scene.add(gate);
-    // The counter. It stands across the hall rather than against a wall, so the
-    // way from the door to the Office is round it — the shape of the room is the
+    // The counter stands across the hall rather than against a wall, so the way
+    // from the door to the Office is round it — the shape of the room is the
     // institution's first question, and the player answers it by walking.
-    const counter = addBox(this.scene, m.wood, [5.2, 1.05, 0.36], [6, 0.525, 26.6]);
+    const counter = addBox(this.scene, m.wood, [5.5, 1.05, 0.36], [6.75, 0.525, 40.6]);
     counter.castShadow = true;
-    addBox(this.scene, m.woodTrim, [5.36, 0.08, 0.5], [6, 1.09, 26.6]);
+    addBox(this.scene, m.woodTrim, [5.66, 0.08, 0.5], [6.75, 1.09, 40.6]);
+    // The book of admissions, open, with nothing written in it tonight.
+    addBox(this.scene, m.paper, [0.62, 0.05, 0.42], [7.4, 1.16, 40.6], [0, 0.12, 0]);
+    addBox(this.scene, m.woodTrim, [0.02, 0.07, 0.42], [7.4, 1.165, 40.6], [0, 0.12, 0]);
+    addCylinder(this.scene, m.brass, 0.06, 0.08, 0.12, [5.6, 1.19, 40.6], [0, 0, 0], 8);
     const barrel = makeBarrel(m);
-    // Moved clear of the west wall. At x 3.25 with a radius of 0.42 it reached
-    // to 2.83, and the old hall's floor began at 3.0: a quarter of the barrel
-    // was inside the masonry.
-    barrel.position.set(3.6, 0, 24.6);
+    barrel.position.set(3.2, 0, 38.4);
     this.scene.add(barrel);
-    addBox(this.scene, m.wood, [0.78, 0.72, 0.72], [10.2, 0.36, 24.4]);
-    addBox(this.scene, m.woodTrim, [0.68, 0.04, 0.72], [10.2, 0.74, 24.4]);
+    addBox(this.scene, m.wood, [0.86, 0.72, 0.86], [10.6, 0.36, 38.2]);
+    addBox(this.scene, m.woodTrim, [0.76, 0.04, 0.76], [10.6, 0.74, 38.2]);
     const gateGuard = makePerson(m, { hood: true, beard: true, scale: 0.98 });
-    gateGuard.position.set(6, 0, 27.1);
+    gateGuard.position.set(5.2, 0, 41.8);
     gateGuard.rotation.y = Math.PI;
     this.scene.add(gateGuard);
-    this.addLamp(6, 26.0, 3.2, 1.9, true);
-    this.addLamp(7.5, 22.9, 3.2, 1.1);
+    // A halberd leant in the corner by the portcullis.
+    addCylinder(this.scene, m.woodTrim, 0.02, 0.025, 2.4, [3.1, 1.2, 42.7], [0.12, 0, 0.08], 6);
+    addBox(this.scene, m.iron, [0.16, 0.34, 0.02], [3.19, 2.4, 42.55], [0.12, 0, 0.08]);
+    this.addLamp(6.5, 40.2, 3.7, 1.9, true);
+    this.addLamp(9.5, 37.5, 3.6, 1.1);
+    this.addBracket(2.02, 2.2, 41.5, [1, 0], 0.5);
 
-    // Familiars' office.
-    const officeTable = makeTable(m, 2.2, 0.9);
-    officeTable.position.set(5.15, 0, 19.4);
+    // The familiars' office.
+    const officeTable = makeTable(m, 2.4, 0.9);
+    officeTable.position.set(6, 0, 31.4);
     this.scene.add(officeTable);
-    for (const [index, x] of [4.35, 5.95].entries()) {
+    for (const [index, x] of [5.2, 6.8].entries()) {
       const familiarChair = makeChair(m);
-      familiarChair.position.set(x, 0, 18.4);
+      familiarChair.position.set(x, 0, 30.4);
       familiarChair.rotation.y = Math.PI;
       this.scene.add(familiarChair);
       const familiar = makePerson(m, {
@@ -2166,55 +2569,90 @@ export class DungeonRenderer {
         hair: true,
         scale: 0.96,
       });
-      familiar.position.set(x, 0, 18.64);
+      familiar.position.set(x, 0, 30.64);
       familiar.rotation.y = Math.PI;
       this.scene.add(familiar);
     }
-    addBox(this.scene, m.paper, [0.52, 0.025, 0.36], [5.1, 0.93, 19.2], [0, 0.2, 0]);
-    addCylinder(this.scene, m.brass, 0.07, 0.09, 0.13, [5.55, 1, 19.2], [0, 0, 0], 8);
-    this.addLamp(5.1, 19.15, 3, 1.8);
+    addBox(this.scene, m.paper, [0.52, 0.025, 0.36], [5.95, 0.93, 31.2], [0, 0.2, 0]);
+    addCylinder(this.scene, m.brass, 0.07, 0.09, 0.13, [6.6, 1, 31.2], [0, 0, 0], 8);
+    // A taper, smoking, in a dish.
+    addCylinder(this.scene, m.wax, 0.014, 0.016, 0.22, [5.2, 1.02, 31.35], [0, 0, 0], 6);
+    this.addLamp(6, 31.2, 3.4, 1.8);
+    // Shelves of ledgers along the west wall.
+    for (const y of [1.0, 1.7, 2.4]) {
+      this.hang(addBox(this.scene, m.woodTrim, [0.3, 0.04, 2.6], [3.17, y, 32.6]));
+      for (let i = 0; i < 9; i++) {
+        this.hang(addBox(this.scene, i % 3 === 0 ? m.darkLeather : m.paper, [0.24, 0.32, 0.1], [3.2, y + 0.18, 31.45 + i * 0.28], [0, 0, (i % 2) * 0.03]));
+      }
+    }
+    this.checkWallBacking("office shelves", 3.02, 32.6, "z", 2.6, 1);
 
-    // High-lamp passage.
-    for (const z of [8, 12, 15.5]) this.addLamp(5.5, z, 3.42, 1.7);
-    for (const z of [7.3, 10.8, 14.2]) {
+    // The passage of high lamps: three legs, five lamps hung under the vault,
+    // and a stretch of dark between every two of them.
+    for (const z of [26.5, 21.5]) this.addLamp(5, z, 4.6, 1.7);
+    this.addLamp(10.5, 16.5, 4.6, 1.5);
+    this.addLamp(11, 12, 4.6, 1.6);
+    for (const z of [24.2, 19.6]) {
       addCylinder(this.scene, m.iron, 0.05, 0.05, 0.46, [4.2, 1.15, z], [0, 0, Math.PI / 2], 7);
       const ring = mesh(new THREE.TorusGeometry(0.16, 0.035, 6, 12), m.iron);
       ring.position.set(4.03, 1.15, z);
       ring.rotation.y = Math.PI / 2;
-      this.scene.add(ring);
+      this.scene.add(this.hang(ring));
     }
+    // The poniard, dropped at the angle where no lamp reaches, lying against
+    // the north wall. A narrow blade and a wrapped grip: it is meant to be
+    // found by the line of light along its edge.
+    const poniard = new THREE.Group();
+    poniard.position.set(8.6, 0.02, 16.2);
+    poniard.rotation.y = 0.35;
+    addBox(poniard, standard("#9ea3a6", 0.35, 0.8), [0.026, 0.012, 0.34], [0, 0.012, -0.12]);
+    addBox(poniard, m.iron, [0.11, 0.02, 0.024], [0, 0.014, 0.06]);
+    addCylinder(poniard, m.darkLeather, 0.016, 0.018, 0.13, [0, 0.016, 0.14], [Math.PI / 2, 0, 0], 6);
+    addCylinder(poniard, m.brass, 0.022, 0.022, 0.02, [0, 0.016, 0.215], [Math.PI / 2, 0, 0], 6);
+    poniard.traverse((item) => {
+      if ((item as THREE.Mesh).isMesh) (item as THREE.Mesh).castShadow = false;
+    });
+    this.scene.add(poniard);
+    poniard.userData.label = "poniard";
 
-    // Tribunal chamber, turned through a right angle.
+    // The anteroom: a bench, a row of pegs with nothing on them, and the basin
+    // in which the accused is made to wash before he is made to stand.
+    const anteBench = makeTable(m, 0.5, 2.0);
+    anteBench.position.set(10.4, -0.36, 5.5);
+    this.scene.add(anteBench);
+    for (let i = 0; i < 5; i++) {
+      this.hang(addCylinder(this.scene, m.iron, 0.02, 0.02, 0.14, [11.2 + i * 0.5, 2.05, 3.07], [Math.PI / 2, 0, 0], 6));
+    }
+    addCylinder(this.scene, m.woodTrim, 0.05, 0.06, 0.8, [13.6, 0.4, 3.6], [0, 0, 0], 8);
+    addCylinder(this.scene, m.brass, 0.3, 0.22, 0.14, [13.6, 0.86, 3.6], [0, 0, 0], 12);
+    const anteWater = mesh(new THREE.CircleGeometry(0.26, 16), m.water, false);
+    anteWater.rotation.x = -Math.PI / 2;
+    anteWater.position.set(13.6, 0.9, 3.6);
+    this.scene.add(anteWater);
+    this.addLamp(12.5, 5.5, 3.9, 1.5);
+
+    // The tribunal chamber.
     //
-    // The room is fifteen metres east to west and nine north to south, and the
-    // five-metre table used to lie across the short axis with the whole bench
-    // queued down one long flank of it, each judge's elbow a metre from the west
-    // wall and the room's entire width empty behind them. A tribunal is not a
-    // refectory: the bench sits in one row, shoulder to shoulder, facing the
-    // person it is judging, and the accused stands in the open with nothing to
-    // either side. Turning the table to lie along the room's own long axis is
-    // what makes that arrangement possible, and it uses the floor the old one
-    // wasted.
-    const TABLE_X = 16.5;
-    const TABLE_Z = 6.5;
-    const TABLE_WIDTH = 7.2;
+    // The five-metre table lies along the room's long axis with the bench in
+    // one row facing the accused, the General raised at its centre, the
+    // secretary at his own desk off the east end, and behind them all, standing
+    // on the floor against the north wall, the crucifix the text has nearly
+    // touching the vault.
+    const TABLE_X = 22.5;
+    const TABLE_Z = 6.2;
+    const TABLE_WIDTH = 8;
     const TABLE_DEPTH = 1.8;
     /** The working surface: the top slab is 0.16 thick, centred at 0.83. */
     const TABLE_TOP = 0.91;
     const longTable = makeTable(m, TABLE_WIDTH, TABLE_DEPTH, true);
     longTable.position.set(TABLE_X, 0, TABLE_Z);
-    // Turned so the velvet frontal and its crosses face the accused rather than
-    // the back of the room.
     longTable.rotation.y = Math.PI;
     this.scene.add(longTable);
 
-    // The Inquisitor-General, raised. The dais is sized so the high chair's own
-    // legs all stand on it: at its old size the back pair overhung the edge by
-    // twelve centimetres and the chair was resting on nothing at two corners.
-    const dais = addBox(this.scene, m.woodTrim, [2.3, 0.2, 1.6], [TABLE_X, 0.1, 4.9]);
+    const dais = addBox(this.scene, m.woodTrim, [2.4, 0.2, 1.6], [TABLE_X, 0.1, 4.5]);
     dais.receiveShadow = true;
     const highChair = makeChair(m, true);
-    highChair.position.set(TABLE_X, 0.2, 4.85);
+    highChair.position.set(TABLE_X, 0.2, 4.45);
     highChair.rotation.y = Math.PI;
     this.scene.add(highChair);
     const general = makePerson(m, {
@@ -2226,14 +2664,13 @@ export class DungeonRenderer {
       face: "mature",
       scale: 1.08,
     });
-    general.position.set(TABLE_X, 0.2, 4.98);
+    general.position.set(TABLE_X, 0.2, 4.58);
     general.rotation.y = Math.PI;
     this.scene.add(general);
 
-    // The bench: two judges to either side of him, all facing south.
-    for (const [i, x] of [13.6, 15, 18, 19.4].entries()) {
+    for (const [i, x] of [19, 20.6, 24.4, 26].entries()) {
       const chair = makeChair(m);
-      chair.position.set(x, 0, 5.05);
+      chair.position.set(x, 0, 4.65);
       chair.rotation.y = Math.PI;
       this.scene.add(chair);
       const inquisitor = makePerson(m, {
@@ -2244,20 +2681,11 @@ export class DungeonRenderer {
         hair: true,
         scale: 0.92,
       });
-      inquisitor.position.set(x, 0, 5.12);
+      inquisitor.position.set(x, 0, 4.72);
       inquisitor.rotation.y = Math.PI;
       this.scene.add(inquisitor);
     }
-
-    // The papers, on the table.
-    //
-    // These sat at x 15.95 on a table whose west edge was 15.975, so more than
-    // half of every sheet hung out over the void, and 21mm above a surface they
-    // were supposed to be resting on. Both faults came of positioning them by
-    // eye from one viewpoint; both are now derived from the table's own
-    // dimensions, which is the only way a sheet of paper stays on a table that
-    // later moves.
-    for (const [i, x] of [13.6, 15, TABLE_X, 18, 19.4].entries()) {
+    for (const [i, x] of [19, 20.6, TABLE_X, 24.4, 26].entries()) {
       addBox(
         this.scene,
         m.paper,
@@ -2266,21 +2694,28 @@ export class DungeonRenderer {
         [0, -0.05 * i, 0],
       );
     }
-    // The crucifix stands on the table, between the bench and the accused, at
-    // the height of a seated man's face. It used to stand on the floor at the
-    // north wall — hovering 0.58 above it, in fact, with nothing underneath.
-    const crucifix = makeCross(m.woodTrim, m.figure, 0.46);
-    crucifix.position.set(TABLE_X, TABLE_TOP, TABLE_Z);
+    // An hourglass at the General's hand, and a small crucifix on the table
+    // before the accused.
+    addCylinder(this.scene, m.woodTrim, 0.07, 0.07, 0.02, [23.9, TABLE_TOP + 0.01, 5.7], [0, 0, 0], 8);
+    addCylinder(this.scene, m.woodTrim, 0.07, 0.07, 0.02, [23.9, TABLE_TOP + 0.23, 5.7], [0, 0, 0], 8);
+    addCylinder(this.scene, standard("#c9d3d8", 0.2, 0.1), 0.055, 0.01, 0.1, [23.9, TABLE_TOP + 0.07, 5.7], [0, 0, 0], 8);
+    addCylinder(this.scene, standard("#c9d3d8", 0.2, 0.1), 0.01, 0.055, 0.1, [23.9, TABLE_TOP + 0.17, 5.7], [0, 0, 0], 8);
+    const tableCross = makeCross(m.woodTrim, m.figure, 0.3);
+    tableCross.position.set(TABLE_X, TABLE_TOP, TABLE_Z + 0.5);
+    tableCross.rotation.y = Math.PI;
+    this.scene.add(tableCross);
+    // The great crucifix, on the floor against the north wall, its head a few
+    // centimetres under the vault: the text has it nearly touching.
+    const crucifix = makeCross(m.woodTrim, m.figure, 2.36);
+    crucifix.position.set(TABLE_X, 0, 3.1);
     crucifix.rotation.y = Math.PI;
     this.scene.add(crucifix);
 
-    // The secretary, at his own desk off the east end, where the record is kept
-    // at right angles to the proceeding it records.
     const secretaryDesk = makeTable(m, 1.3, 0.9);
-    secretaryDesk.position.set(20.9, 0, 8.6);
+    secretaryDesk.position.set(27.6, 0, 8.6);
     this.scene.add(secretaryDesk);
     const secretaryChair = makeChair(m);
-    secretaryChair.position.set(21.9, 0, 8.6);
+    secretaryChair.position.set(28.5, 0, 8.6);
     secretaryChair.rotation.y = Math.PI / 2;
     this.scene.add(secretaryChair);
     const secretary = makePerson(m, {
@@ -2291,25 +2726,25 @@ export class DungeonRenderer {
       scale: 0.9,
       robe: "#1c1511",
     });
-    secretary.position.set(21.83, 0, 8.6);
+    secretary.position.set(28.43, 0, 8.6);
     secretary.rotation.y = Math.PI / 2;
     this.scene.add(secretary);
-    addBox(this.scene, m.paper, [0.5, 0.02, 0.34], [20.75, TABLE_TOP + 0.01, 8.6]);
-    addCylinder(this.scene, m.woodTrim, 0.012, 0.012, 0.55, [20.5, TABLE_TOP + 0.2, 8.75], [0, 0, 0.7], 5);
+    addBox(this.scene, m.paper, [0.5, 0.02, 0.34], [27.45, TABLE_TOP + 0.01, 8.6]);
+    addCylinder(this.scene, m.woodTrim, 0.012, 0.012, 0.55, [27.2, TABLE_TOP + 0.2, 8.75], [0, 0, 0.7], 5);
 
-    // The accused, standing in the open with the bench in front and the room
-    // empty behind.
+    // The accused, barefoot, standing in the open with the bench in front and
+    // the room empty behind, and the selette he is not yet permitted.
     const prisoner = makePerson(m, {
       prisoner: true,
       face: "young",
       scale: 1.04,
       robe: "#6b5c4a",
     });
-    prisoner.position.set(TABLE_X, 0, 8.9);
+    prisoner.position.set(TABLE_X, 0, 9);
     prisoner.rotation.y = 0;
     this.scene.add(prisoner);
     const selette = makeStool(m, true);
-    selette.position.set(17.8, 0, 9.2);
+    selette.position.set(23.8, 0, 9.4);
     this.scene.add(selette);
 
     const inscriptionTexture = makeInscriptionTexture();
@@ -2321,295 +2756,312 @@ export class DungeonRenderer {
       emissiveIntensity: 0.15,
     });
     const inscription = wallDecal(new THREE.PlaneGeometry(5.1, 0.9), inscriptionMaterial);
-    inscription.position.set(TABLE_X, 3.35, 4.012);
+    inscription.position.set(TABLE_X, WALL_HEIGHT - 0.6, 3.012);
     this.scene.add(inscription);
-    this.checkWallBacking("tribunal north inscription", TABLE_X, 4.012, "x", 5.1, 1);
-    for (const x of [11.2, 12.8, 21.2, 22.8]) {
+    this.checkWallBacking("tribunal north inscription", TABLE_X, 3.012, "x", 5.1, 1);
+    for (const x of [17.4, 19.2, 25.8, 27.6]) {
       const cross = makeScarletCross(m.redSilk, 0.48);
-      cross.position.set(x, 2.2, 4.015);
+      cross.position.set(x, 2.5, 3.015);
       this.scene.add(this.hang(cross));
-      this.checkWallBacking(`north cross x=${x}`, x, 4.015, "x", 0.24, 1);
+      this.checkWallBacking(`north cross x=${x}`, x, 3.015, "x", 0.24, 1);
     }
-    // The side walls are pierced: the west one by the passage doorway at z 8-9,
-    // the east one by the cell corridor at z 7-8. Both the crosses and the
-    // inscriptions used to be spaced evenly down the room's full length, which
-    // put one cross and most of each inscription directly across an opening.
-    // These positions keep every piece over solid masonry on both walls, so the
-    // two sides still read as a matched pair.
+    // The west wall is pierced at rows 6-7 by the anteroom door and the east
+    // wall at rows 4-5 by the bent passage; the crosses and inscriptions keep
+    // to the rows that are solid on both sides.
     for (const [x, rotation, facing] of [
-      [10.012, Math.PI / 2, 1],
-      [23.988, -Math.PI / 2, -1],
+      [16.012, Math.PI / 2, 1],
+      [29.988, -Math.PI / 2, -1],
     ] as const) {
-      // Rows 4, 7 and 9. The west wall is now pierced at rows 10-11 by the
-      // passage doorway and the east wall at row 6 by the bent passage, and
-      // these are the rows that are solid masonry on *both* sides — so the two
-      // flanks still read as a matched pair rather than one of them carrying a
-      // cross hung over a hole.
-      for (const z of [4.5, 7.5, 9.5]) {
+      for (const z of [8.5, 10.5]) {
         const cross = makeScarletCross(m.redSilk, 0.44);
-        cross.position.set(x, 2.05, z);
+        cross.position.set(x, 2.3, z);
         cross.rotation.y = rotation;
         this.scene.add(this.hang(cross));
         this.checkWallBacking(`side cross x=${x} z=${z}`, x, z, "z", 0.22, facing);
       }
       const sideInscription = wallDecal(new THREE.PlaneGeometry(2.6, 0.58), inscriptionMaterial);
-      sideInscription.position.set(x, 3.35, 8.5);
+      sideInscription.position.set(x, 3.6, 9.5);
       sideInscription.rotation.y = rotation;
       this.scene.add(sideInscription);
-      this.checkWallBacking(`side inscription x=${x}`, x, 8.5, "z", 2.6, facing);
+      this.checkWallBacking(`side inscription x=${x}`, x, 9.5, "z", 2.6, facing);
+    }
+    // Chestnut panelling wants candles, not lanterns: a pair of standing
+    // candelabra flank the dais.
+    for (const x of [19.8, 25.2]) {
+      addCylinder(this.scene, m.brass, 0.02, 0.03, 1.5, [x, 0.75, 3.6], [0, 0, 0], 6);
+      addCylinder(this.scene, m.brass, 0.14, 0.18, 0.05, [x, 0.025, 3.6], [0, 0, 0], 8);
+      addCylinder(this.scene, m.brass, 0.09, 0.05, 0.05, [x, 1.52, 3.6], [0, 0, 0], 8);
+      for (const dx of [-0.08, 0, 0.08]) {
+        addCylinder(this.scene, m.wax, 0.012, 0.014, 0.22, [x + dx, 1.65, 3.6], [0, 0, 0], 6);
+      }
+      const flame = mesh(new THREE.SphereGeometry(0.035, 8, 6), m.flame, false);
+      flame.scale.set(0.7, 1.6, 0.7);
+      flame.position.set(x, 1.8, 3.6);
+      this.scene.add(flame);
+      const light = new THREE.PointLight("#f4b56a", 7, 4.5, 1.6);
+      light.position.set(x, 1.85, 3.6);
+      this.scene.add(light);
+      this.lamps.push({ light, flame, base: 7, seed: x });
     }
     // One lamp over the bench and one over the place the accused stands. The
     // floor between them is the length of the room and is lit by neither.
-    this.addLamp(TABLE_X, TABLE_Z, 3.38, 3.4, true);
-    this.addLamp(TABLE_X, 9.6, 3.3, 1.5);
+    this.addLamp(TABLE_X, TABLE_Z, 4.2, 3.4, true);
+    this.addLamp(TABLE_X, 9.8, 4.0, 1.5);
+    this.addLamp(17.2, 7, 4.1, 0.7);
+
+    // The bent passage: two lamps, one at each turn, and nothing between.
+    this.addLamp(32.5, 4.6, 4.4, 1.0);
+    this.addLamp(33, 10.4, 4.4, 1.0);
 
     // The cell range.
     //
-    // Six cells off twenty-four metres of corridor, each fronted by iron rather
-    // than stone. The lamps are in the corridor only and there are five of them
-    // over twenty-four metres, so a cell is lit by what spills through its own
-    // bars and the stretches between lamps are properly dark. Three of the cells
-    // have a grate to the hillside, and what comes through it is the only cold
-    // light in the building that is not the moon door.
+    // Six cells off twenty-eight metres of corridor, each fronted by iron
+    // rather than stone. The corridor's own lamps are amber and few; what lights
+    // a cell is its own weak lamp on a bracket, and the moon.
     const muralTexture = makeMuralTexture();
     this.disposableTextures.push(muralTexture);
     this.buildCellFronts();
-    for (const z of [4.5, 9.5, 14.5, 19.5, 24.5]) {
-      this.addLamp(29, z, 2.55, z === 9.5 || z === 19.5 ? 0.66 : 0.98, false, "#8fa2a6");
+    this.buildDoorLeaves();
+    for (const z of [6, 12, 18, 24, 29]) {
+      this.addLamp(38, z, 3.7, z === 29 ? 1.2 : 0.95);
     }
 
-    // Every cell gets its pallet, on the same measurement, from the same list
-    // the colliders and the door hinges are built from.
-    for (const row of CELL_ROWS) {
+    for (const [index, row] of CELL_ROWS.entries()) {
       const pallet = makePallet(m);
-      pallet.position.set(32.5, 0, row + 0.45);
+      pallet.position.set(41.95, 0, row + 2.55);
       this.scene.add(pallet);
+      const stool = makeStool(m);
+      stool.position.set(44.35, 0, row + 0.45);
+      this.scene.add(stool);
+      // The weak lamp the text gives each occupied cell, on a bracket on the
+      // north wall. The empty cells have none, and are lit by the moon or not
+      // at all.
+      if (index < 3 || index === 5) {
+        this.addBracket(42.6, 2.4, row + 0.06, [0, 1], 0.62, "#e8a25c");
+      }
+      // A jug and a bowl by the gate.
+      addCylinder(this.scene, m.canvas, 0.09, 0.07, 0.24, [41.3, 0.12, row + 0.3], [0, 0, 0], 8);
     }
 
-    // The grated cells.
-    //
-    // The east range backs onto the hillside, so three of the six have a slit
-    // high in the outer wall with a grille in it. It is the one thing in the
-    // gaol that is not the institution's: the light is the wrong colour, it
-    // moves with nothing, and it falls on a patch of floor a prisoner cannot
-    // reach. Set at 3.1m in a room whose ceiling is 4.2 — high enough to be no
-    // use, which is the point of a window in a cell.
-    for (const row of [8, 16, 24]) {
-      const z = row + 1;
-      // Everything here hangs on the inner face of the wall block, which spans
-      // x 34..35. A first attempt put the stone reveal at 34.24 and the bright
-      // pane at 34.04 — both inside the masonry, so the wall drew over the
-      // window and the cells got a light source with nothing to see it come
-      // from.
-      const FACE = 34;
-      // The slit read from inside: bright, flat, and fogless, so it stays a hole
-      // in the wall at any distance down the corridor.
-      const pane = mesh(
-        new THREE.PlaneGeometry(0.82, 0.58),
-        new THREE.MeshBasicMaterial({ color: "#9db4d2", fog: false }),
-        false,
-      );
-      pane.position.set(FACE - 0.01, 3.1, z);
-      pane.rotation.y = -Math.PI / 2;
-      this.scene.add(pane);
-      for (let i = 0; i < 4; i++) {
-        this.hang(addCylinder(this.scene, m.iron, 0.026, 0.026, 0.62, [FACE - 0.05, 3.1, z - 0.3 + i * 0.2], [0, 0, 0], 6));
-      }
-      for (const barY of [2.85, 3.35]) {
-        this.hang(addCylinder(this.scene, m.iron, 0.022, 0.022, 0.84, [FACE - 0.05, barY, z], [Math.PI / 2, 0, 0], 6));
-      }
-      // A dressed stone surround, straddling the face so it reads as built into
-      // the wall rather than stuck onto it.
-      for (const [w, h, dy, dz] of [
-        [0.09, 0.1, 0.36, 0],
-        [0.09, 0.1, -0.36, 0],
-        [0.09, 0.82, 0, 0.46],
-        [0.09, 0.82, 0, -0.46],
-      ] as const) {
-        const jamb = addBox(
-          this.scene,
-          m.cellStone,
-          dz === 0 ? [w, h, 1.02] : [w, 0.82, 0.1],
-          [FACE - 0.02, 3.1 + dy, z + dz],
-        );
-        jamb.castShadow = false;
-        this.hang(jamb);
-      }
-      // The shaft itself. A spot rather than a point light, aimed down and in,
-      // so it lands as a bright lozenge on the flagstones instead of washing the
-      // whole cell pale blue.
-      const shaft = new THREE.SpotLight("#8fa8c8", 6.5, 8, 0.66, 0.55, 1.25);
-      shaft.position.set(FACE - 0.12, 3.3, z);
-      shaft.target.position.set(31.9, 0, z + 0.5);
-      this.scene.add(shaft, shaft.target);
-    }
-
-    // Marcello's cell. Bendetta's wall faces the bars, so it is the first thing
-    // seen from the corridor and the last thing he can look away from.
-    //
-    // The cell's east wall block spans x 34..35, so its inner face is x = 34.
-    const CELL_EAST_FACE = 33.985;
+    // Marcello's cell. Bendetta's wall is the south wall, over his pallet: the
+    // first thing seen from the gate, and the last thing he can look away from
+    // lying down. The panel of stone that opens stands beside it.
+    const CELL_SOUTH_FACE = CELL_ROWS[0] + 3 - 0.015;
     const mural = wallDecal(
-      new THREE.PlaneGeometry(1.9, 2.7),
+      new THREE.PlaneGeometry(1.6, 2.5),
       new THREE.MeshStandardMaterial({
         map: muralTexture,
-        // Transparent, unlit-flat and slightly darkened, so the pigment sits in
-        // the masonry's own light instead of glowing off a panel of its own.
         transparent: true,
         color: "#9c8875",
         roughness: 1,
         depthWrite: false,
       }),
     );
-    mural.position.set(CELL_EAST_FACE, 1.9, 5);
-    mural.rotation.y = -Math.PI / 2;
+    mural.position.set(42.05, 2.15, CELL_SOUTH_FACE);
+    mural.rotation.y = Math.PI;
     this.scene.add(mural);
-    this.checkWallBacking("Bendetta's wall", CELL_EAST_FACE, 5, "z", 1.9, -1);
+    this.checkWallBacking("Bendetta's wall", 42.05, CELL_SOUTH_FACE, "x", 1.6, -1);
+    // The demon's pupils: two discs on the wall over the painted eyes, which
+    // slide a little toward whoever is standing in the cell. The text has the
+    // eyes appear to move, and so they do — by a centimetre, and only when
+    // looked at from inside.
+    for (const u of [0.435, 0.565]) {
+      const pupil = mesh(new THREE.CircleGeometry(0.03, 10), standard("#0b0705", 1), false);
+      const x = 42.05 + (0.5 - u) * 1.6;
+      const y = 2.15 + 1.25 - 0.355 * 2.5;
+      pupil.position.set(x, y, CELL_SOUTH_FACE - 0.006);
+      pupil.rotation.y = Math.PI;
+      this.scene.add(this.hang(pupil));
+      this.pupils.push({ mesh: pupil, restX: x, restY: y });
+    }
     // Nail-scratches below the painting, cut into the wall rather than hung in
-    // front of it.
-    //
-    // These were 12mm rods centred 27mm clear of the masonry: nine sticks
-    // floating in the air beside the mural, which is what they read as. A
-    // scratch is not a separate object near a wall, it is a disturbance of the
-    // wall, so each now straddles the face — mostly buried, a few millimetres
-    // proud — and cannot come away from it however the mural is later moved.
+    // front of it: each straddles the face, mostly buried, a few millimetres
+    // proud.
     for (let i = 0; i < 9; i++) {
       const scratch = addBox(
         this.scene,
         m.scratch,
-        [0.024, 0.011, 0.34 + (i % 3) * 0.12],
-        [34.0, 0.42 + i * 0.062, 4.7 + (i % 2) * 0.22],
-        [0.06 * (i % 2 ? 1 : -1), 0, 0.05],
+        [0.34 + (i % 3) * 0.12, 0.011, 0.024],
+        [41.5 + (i % 2) * 0.22, 0.98 + i * 0.05, CELL_SOUTH_FACE + 0.015],
+        [0, 0.05, 0.06 * (i % 2 ? 1 : -1)],
       );
       scratch.castShadow = false;
     }
+    // Over the slit, a lintel of stone that fills the wall above the panel, so
+    // the slit reads as a doorway cut into a wall rather than a wall missing.
+    addBox(this.scene, m.cellStone, [1.0, WALL_HEIGHT - 2.7, 1.0], [43.5, 2.7 + (WALL_HEIGHT - 2.7) / 2, 7.5]);
 
-    // Maddalena's cell: no infernal pictures, a web, and a small gold cross.
+    // Maddalena's cell: no infernal pictures, a web beside the lamp with its
+    // spider on it, and a small gold cross on the wall she prays toward.
     const goldCross = makeScarletCross(m.brass, 0.35);
-    goldCross.position.set(32.6, 1.2, 9.965);
+    goldCross.position.set(42.4, 1.7, CELL_ROWS[1] + 3 - 0.035);
     goldCross.rotation.y = Math.PI;
     this.scene.add(this.hang(goldCross));
-    this.checkWallBacking("maddalena gold cross", 32.6, 9.965, "x", 0.17, -1);
+    this.checkWallBacking("maddalena gold cross", 42.4, CELL_ROWS[1] + 3 - 0.035, "x", 0.17, -1);
     const web = new THREE.Group();
-    const webMaterial = new THREE.LineBasicMaterial({ color: "#9b9485", transparent: true, opacity: 0.4 });
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const points = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0)];
-      web.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), webMaterial));
+    const webMaterial = new THREE.LineBasicMaterial({ color: "#a39c8c", transparent: true, opacity: 0.45 });
+    const strands: THREE.Vector3[] = [];
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2;
+      const end = new THREE.Vector3(Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0);
+      strands.push(end);
+      web.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), end]), webMaterial));
     }
-    for (const radius of [0.12, 0.24, 0.36]) {
+    for (const radius of [0.1, 0.19, 0.28, 0.37]) {
       const points: THREE.Vector3[] = [];
-      for (let i = 0; i <= 36; i++) points.push(new THREE.Vector3(Math.cos((i / 36) * Math.PI * 2) * radius, Math.sin((i / 36) * Math.PI * 2) * radius, 0));
+      for (let i = 0; i <= 36; i++) {
+        const a = (i / 36) * Math.PI * 2;
+        const wobble = radius * (1 + Math.sin(a * 7) * 0.03);
+        points.push(new THREE.Vector3(Math.cos(a) * wobble, Math.sin(a) * wobble, 0));
+      }
       web.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), webMaterial));
     }
-    web.position.set(33.96, 3.4, 8.6);
+    web.position.set(44.96, 3.0, CELL_ROWS[1] + 0.55);
+    web.userData.label = "web";
     web.rotation.y = -Math.PI / 2;
     this.scene.add(this.hang(web));
+    // The spider: a body, an abdomen, and eight legs, creeping along a strand
+    // and back. It is small, and it moves, which is the whole of what the text
+    // gives it.
+    const spider = new THREE.Group();
+    const spiderMaterial = standard("#1a1410", 1);
+    const abdomen = mesh(new THREE.SphereGeometry(0.02, 8, 6), spiderMaterial, false);
+    abdomen.scale.set(1, 0.8, 1.3);
+    spider.add(abdomen);
+    const thorax = mesh(new THREE.SphereGeometry(0.012, 8, 6), spiderMaterial, false);
+    thorax.position.set(0, 0, -0.026);
+    spider.add(thorax);
+    for (let i = 0; i < 8; i++) {
+      const side = i < 4 ? -1 : 1;
+      const k = i % 4;
+      const leg = addCylinder(spider, spiderMaterial, 0.002, 0.002, 0.05, [side * 0.028, 0.004, -0.03 + k * 0.014], [0.3 * (k - 1.5), 0, side * 1.1], 4);
+      leg.castShadow = false;
+    }
+    web.add(spider);
+    this.spider = { mesh: spider, from: new THREE.Vector3(0, 0, 0), to: strands[2] };
 
     // The fifth cell is empty, and keeps its tenant's tally: ninety days cut
-    // into the masonry by somebody who is no longer in it. Nothing else in the
-    // gaol says as plainly what the six identical slots are for.
+    // into the north wall by somebody who is no longer in it.
     for (let i = 0; i < 90; i++) {
       const column = Math.floor(i / 18);
       const scratch = addBox(
         this.scene,
         m.scratch,
-        [0.022, 0.09, 0.008],
-        [34.0, 1.15 - (i % 18) * 0.045, 20.3 + column * 0.13],
+        [0.008, 0.09, 0.022],
+        [42.2 + column * 0.13, 1.35 - (i % 18) * 0.05, CELL_ROWS[4] + 0.0],
         [0, 0, 0.04],
       );
       scratch.castShadow = false;
     }
+    // And in the further cell, low on the west jamb where a hand on the floor
+    // could reach, two letters and nothing more: B. C.
+    for (const [dx, dz, ry] of [[0, 0, 0], [0, 0.09, 0], [0.04, 0.045, Math.PI / 2]] as const) {
+      const mark = addBox(this.scene, m.scratch, [0.006, 0.07, 0.016], [44.99, 0.36 + dx, CELL_ROWS[2] + 2.3 + dz], [0, 0, ry * 0.3]);
+      mark.castShadow = false;
+    }
 
-    // Wardrobe and disguise chamber.
-    //
-    // The press stands against the south wall. It used to stand squarely across
-    // the room's own doorway, leaving 0.50 of gap where the player needs 0.56,
-    // so the wardrobe could only be entered the long way round through the
-    // vault — a room about a disguise, sealed by its own furniture.
+    // The gaoler's lodge: the board of keys on the west wall, a stool, a jug,
+    // and his own lamp.
+    const board = makeKeyBoard(m);
+    board.position.set(34.03, 1.55, 25.8);
+    board.rotation.y = Math.PI / 2;
+    this.scene.add(this.hang(board));
+    this.checkWallBacking("key board", 34.03, 25.8, "z", 1.2, 1);
+    const lodgeStool = makeStool(m);
+    lodgeStool.position.set(34.5, 0, 27.3);
+    this.scene.add(lodgeStool);
+    addCylinder(this.scene, m.canvas, 0.1, 0.08, 0.28, [35.6, 0.14, 24.3], [0, 0, 0], 8);
+    this.addBracket(35.98, 2.4, 24.6, [-1, 0], 0.7);
+
+    // The lower passage down to the chamber: one lamp at the turn.
+    this.addLamp(34.5, 29.8, 4.2, 0.9);
+
+    // The wardrobe room.
     const wardrobe = makeWardrobe(m);
-    wardrobe.position.set(12.5, 0, 21.5);
+    wardrobe.position.set(14, 0, 36.5);
     this.scene.add(wardrobe);
     const bench = makeTable(m, 1.5, 0.46);
-    bench.position.set(12.5, 0, 19.6);
+    bench.position.set(14, 0, 33.6);
     this.scene.add(bench);
-    this.addLamp(12.5, 20.5, 2.95, 1.7);
+    // A folded habit on the bench, and a pair of shoes under it.
+    addBox(this.scene, m.blackCloth, [0.5, 0.12, 0.36], [13.7, 0.97, 33.6]);
+    addBox(this.scene, m.darkLeather, [0.1, 0.06, 0.26], [14.3, 0.03, 33.5]);
+    addBox(this.scene, m.darkLeather, [0.1, 0.06, 0.26], [14.45, 0.03, 33.55], [0, 0.2, 0]);
+    this.addLamp(14, 35, 3.6, 1.7);
 
-    // Password vault. The masked official standing here is a patrol, not a
-    // fixture: there used to be a static figure at his post as well as the
-    // patrol that walks it, so the same man stood in two places at once.
-    addBox(this.scene, m.woodTrim, [0.75, 0.08, 0.75], [19.6, 0.04, 20.4]);
-    this.addLamp(19.5, 21.8, 3.1, 2.2, true);
+    // The password vault: the watcher's post under the lamp, and on the west
+    // wall his own bracket lamp with the key of the moon door on a nail beside
+    // it.
+    addBox(this.scene, m.woodTrim, [0.75, 0.08, 0.75], [20.5, 0.04, 33.2]);
+    this.addLamp(20.5, 34.2, 3.6, 2.2, true);
+    this.addBracket(18.02, 2.5, 31.6, [1, 0], 0.6);
+    const nail = addCylinder(this.scene, m.iron, 0.008, 0.008, 0.08, [18.03, 1.55, 32.4], [0, 0, Math.PI / 2], 6);
+    this.hang(nail);
+    const moonKey = makeKey(m);
+    moonKey.position.set(18.07, 1.53, 32.4);
+    moonKey.rotation.y = Math.PI / 2;
+    moonKey.rotation.z = 0.06;
+    this.scene.add(this.hang(moonKey));
+    this.takeable.set("moon-key", moonKey);
+    // A plaque over the post: the word is not written.
+    const plaque = addBox(this.scene, m.woodTrim, [0.9, 0.3, 0.03], [20.5, 3.2, 31.03]);
+    this.hang(plaque);
+    for (let i = 0; i < 6; i++) {
+      this.hang(addBox(this.scene, m.scratch, [0.06 + (i % 3) * 0.02, 0.008, 0.01], [20.15 + i * 0.14, 3.2, 31.045]));
+    }
 
-    // The Chamber of Groans, at four times its old floor.
-    //
-    // Ten metres by ten, with four piers carrying the vault and two lamps in it.
-    // The size and the darkness are one decision: a hall this big lit as brightly
-    // as the old five-metre room would simply be a bigger lit room, and what the
-    // name promises is that the far end of it is somewhere you have to go to find
-    // out about. The lamps are placed to leave the corners and the whole southern
-    // third unlit.
+    // The Chamber of Groans, twelve metres by eleven under four piers.
     const grille = makePortcullis(m);
-    grille.position.set(19.5, 1.95, 24.5);
-    grille.scale.set(0.76, 1, 1);
+    grille.position.set(25.5, 1.95, 38);
+    grille.rotation.y = Math.PI / 2;
+    grille.scale.set(0.5, 1, 1);
     this.scene.add(grille);
-    for (const [px, pz] of [[17.5, 27.5], [22.5, 27.5], [17.5, 32.5], [22.5, 32.5]] as const) {
+    for (const [px, pz] of [[29, 37], [34, 37], [29, 41], [34, 41]] as const) {
       const pier = addBox(this.scene, m.brownStone, [0.9, WALL_HEIGHT, 0.9], [px, WALL_HEIGHT / 2, pz]);
       pier.castShadow = true;
       pier.receiveShadow = true;
-      // A moulded capital and base, so the pier reads as built rather than as a
-      // column of wall left standing by accident.
       addBox(this.scene, m.stone, [1.06, 0.18, 1.06], [px, 0.09, pz]);
       addBox(this.scene, m.stone, [1.06, 0.22, 1.06], [px, WALL_HEIGHT - 0.11, pz]);
     }
     const rack = makeRack(m);
-    rack.position.set(19.6, 0, 30.2);
+    rack.position.set(31.5, 0, 40);
     rack.rotation.y = 0.35;
     this.scene.add(rack);
     const narrowTable = makeTable(m, 1, 2.2);
-    narrowTable.position.set(16.8, 0, 33.8);
+    narrowTable.position.set(27.5, 0, 43);
     narrowTable.rotation.y = Math.PI / 2 - 0.15;
     this.scene.add(narrowTable);
-    // The apparatus hangs from the vault, and now visibly does.
-    //
-    // Everything in this room used to float. The pulley was a bare torus in mid
-    // air with nothing above it; the two rods stood from 1.48 to 3.63 with their
-    // tops half a metre short of the ceiling and their bottoms half a metre off
-    // the floor, so a pair of iron bars hung in the room supported by nothing at
-    // either end; and the rings hung off those. Machinery that floats is not
-    // sinister, it is unfinished — and in a room whose whole argument is that the
-    // apparatus is real and merely out of sight, that is the worst thing it could
-    // read as. Each piece is now carried by something that reaches the vault.
-    const beam = addBox(this.scene, m.wood, [0.22, 0.24, 4.4], [21.8, WALL_HEIGHT - 0.14, 29.4]);
-    beam.castShadow = true;
-    addCylinder(this.scene, m.iron, 0.03, 0.03, 1.42, [21.8, WALL_HEIGHT - 0.97, 27.9], [0, 0, 0], 8);
-    const pulley = mesh(new THREE.TorusGeometry(0.34, 0.07, 10, 22), m.iron);
-    pulley.position.set(21.8, WALL_HEIGHT - 1.7, 27.9);
-    pulley.rotation.x = Math.PI / 2;
-    this.scene.add(pulley);
-    // The cord over the pulley, hanging to a hook. It ends somewhere.
-    addCylinder(this.scene, m.iron, 0.012, 0.012, 1.5, [22.14, WALL_HEIGHT - 2.45, 27.9], [0, 0, 0], 6);
-    for (const z of [30.4, 31.2]) {
-      // Chains from the beam down to the manacle rings, and the rings hanging on
-      // them, rather than rods standing in the air with rings threaded on.
-      const drop = WALL_HEIGHT - 0.02 - 1.52;
-      addCylinder(this.scene, m.iron, 0.016, 0.016, drop, [21.8, 1.52 + drop / 2, z], [0, 0, 0], 6);
-      const ring = mesh(new THREE.TorusGeometry(0.13, 0.03, 8, 16), m.iron);
-      // Hung on the chain's last link, not four centimetres beneath it.
-      ring.position.set(21.8, 1.55, z);
-      ring.rotation.x = Math.PI / 2;
-      this.scene.add(ring);
+    for (const z of [43.6, 35.2]) {
+      addCylinder(this.scene, m.iron, 0.4, 0.3, 0.3, [36.4, 0.15, z], [0, 0, 0], 12);
     }
-    this.addLamp(19.6, 26.4, 2.85, 1.4);
-    this.addLamp(21.4, 30.6, 2.7, 1.05);
+    // Cords coiled on a peg, and the apparatus hanging from a beam under the
+    // vault.
+    const beam = addBox(this.scene, m.wood, [0.22, 0.24, 4.4], [35.5, WALL_HEIGHT - 0.14, 39.4]);
+    beam.castShadow = true;
+    addCylinder(this.scene, m.iron, 0.03, 0.03, 1.7, [35.5, WALL_HEIGHT - 0.95, 37.9], [0, 0, 0], 8);
+    // The wheel hangs on its rod, upright, with the cord over it.
+    const pulley = mesh(new THREE.TorusGeometry(0.34, 0.07, 10, 22), m.iron);
+    pulley.position.set(35.5, WALL_HEIGHT - 1.7, 37.9);
+    pulley.rotation.y = Math.PI / 2;
+    this.scene.add(this.hang(pulley));
+    // The cord over the pulley and the rings on the chains hang from what is
+    // above them, which the floating audit reads from below; they are declared
+    // hung so it does not report a cord for not standing on the floor.
+    this.hang(addCylinder(this.scene, m.iron, 0.012, 0.012, 1.5, [35.84, WALL_HEIGHT - 2.45, 37.9], [0, 0, 0], 6));
+    for (const z of [40.4, 41.2]) {
+      const drop = WALL_HEIGHT - 0.02 - 1.52;
+      addCylinder(this.scene, m.iron, 0.016, 0.016, drop, [35.5, 1.52 + drop / 2, z], [0, 0, 0], 6);
+      const ring = mesh(new THREE.TorusGeometry(0.13, 0.03, 8, 16), m.iron);
+      ring.position.set(35.5, 1.55, z);
+      ring.rotation.x = Math.PI / 2;
+      this.scene.add(this.hang(ring));
+    }
+    this.addLamp(29.5, 36, 3.2, 1.3);
+    this.addLamp(33.5, 41.5, 3.0, 1.05);
+    this.addBracket(26.02, 2.2, 42.4, [1, 0], 0.5);
 
-    // Moon door and stair.
-    //
-    // The treads are built from the plan's own stair, not beside it, so the step
-    // the player sees is the step the player stands on. Previously these were
-    // eight boxes drawn on a flat floor: the hidden stair could be walked
-    // through at ground level but never climbed, and the moon door sat three
-    // metres up a wall with nothing leading to it.
+    // The moon stair: the treads from the plan's own flight, the landing, and
+    // the door on it — hung by `buildDoorLeaves`, since it opens.
     for (const flight of this.model.stairs) {
       for (const tread of treadsOf(flight)) {
         const width = flight.x2 - flight.x1;
@@ -2626,107 +3078,341 @@ export class DungeonRenderer {
     for (const level of this.model.landings) {
       const slab = addBox(
         this.scene,
-        m.stone,
+        level.id === "garden-floor" ? m.turf : level.id.startsWith("lane") ? m.gravel : m.stone,
         [level.x2 - level.x1, level.height, level.y2 - level.y1],
         [(level.x1 + level.x2) / 2, level.height / 2, (level.y1 + level.y2) / 2],
       );
       slab.receiveShadow = true;
+      slab.userData.label = level.id;
     }
-    // The door stands on the landing, on the inner face of the north wall.
-    const MOON_X = 28.5;
-    const MOON_FACE = 30.07;
-    const moonDoor = addBox(this.scene, m.woodTrim, [1.5, 2.4, 0.16], [MOON_X, 2.8, MOON_FACE]);
-    moonDoor.castShadow = true;
-    for (const x of [-0.5, 0, 0.5]) addBox(moonDoor, m.iron, [0.06, 2.24, 0.05], [x, 0, 0.11]);
-    addCylinder(this.scene, m.iron, 0.05, 0.05, 0.16, [MOON_X + 0.56, 2.7, MOON_FACE - 0.05], [Math.PI / 2, 0, 0], 8);
-    this.checkWallBacking("moon door", MOON_X, 30.0, "x", 1.5, 1);
-    // Cold light leaking round the door, against the warm lamps everywhere else.
-    // It is the only daylight-coloured thing in the building, and it is what the
-    // stair is climbed towards — so it has to be visible from the foot of the
-    // flight, which the old single spot aimed along the treads was not.
-    const leak = new THREE.PointLight("#a8c0d8", 4.6, 8, 1.25);
-    leak.position.set(MOON_X, 3.1, MOON_FACE + 0.48);
+    // A lamp partway down the flight, so the treads are legible on the way up,
+    // and cold light leaking round the shut door, so the door reads as shut
+    // against something bright rather than as a dark panel at the top of a
+    // stair.
+    this.addLamp(43, 44.6, 4.0, 0.7);
+    const MOON_X = 43;
+    const MOON_FACE = 39.0;
+    const leak = new THREE.PointLight("#a8c0d8", 5, 8, 1.25);
+    leak.position.set(MOON_X, UPPER_FLOOR + 1.7, MOON_FACE + 0.9);
     this.scene.add(leak);
-    const moonLight = new THREE.SpotLight("#9eb5cd", 12, 14, 0.5, 0.7, 1.05);
-    moonLight.position.set(MOON_X, 3.9, MOON_FACE + 0.23);
-    moonLight.target.position.set(MOON_X, 0, 34.6);
-    this.scene.add(moonLight, moonLight.target);
-    // The gap itself: a thin cold sliver down each side of the leaf and across
-    // its head, so the door reads as shut against something bright rather than
-    // as a dark panel at the top of a stair.
     const gap = new THREE.MeshBasicMaterial({ color: "#cfe0f2", fog: false });
     for (const [w, h, x, y] of [
-      [0.035, 2.4, -0.77, 2.8],
-      [0.035, 2.4, 0.77, 2.8],
-      [1.57, 0.035, 0, 4.01],
+      [0.035, 2.4, -0.97, UPPER_FLOOR + 1.2],
+      [0.035, 2.4, 0.97, UPPER_FLOOR + 1.2],
+      [1.97, 0.035, 0, UPPER_FLOOR + 2.41],
     ] as const) {
       const sliver = mesh(new THREE.PlaneGeometry(w, h), gap, false);
-      sliver.position.set(MOON_X + x, y, MOON_FACE - 0.015);
+      sliver.position.set(MOON_X + x, y, MOON_FACE + 0.07);
       sliver.rotation.y = Math.PI;
       this.scene.add(sliver);
     }
-    // A lamp partway down the flight, so the treads are legible on the way up.
-    this.addLamp(MOON_X, 33.3, 3.3, 0.7);
+    // Moonlight through the doorway: a spot standing in the open air of the
+    // lane, aimed down through the door at the flight. The leaf casts, so a
+    // shut door holds it back and an opening one lets it in across the treads.
+    const doorMoon = new THREE.SpotLight("#b8c9e6", 1.9, 0, 0.26, 0.5, 0);
+    doorMoon.position.set(43.6, 14, 24);
+    doorMoon.target.position.set(43, UPPER_FLOOR - 1.2, 42);
+    doorMoon.castShadow = true;
+    doorMoon.shadow.mapSize.set(1024, 1024);
+    doorMoon.shadow.bias = -0.0008;
+    doorMoon.shadow.normalBias = 0.03;
+    this.scene.add(doorMoon, doorMoon.target);
   }
 
   /**
-   * Reports scenery that is holding itself up.
+   * The gratings, and the moon through them.
    *
-   * The torture chamber had a pulley hanging in mid air, and a pair of iron rods
-   * whose tops stopped half a metre short of the vault and whose bottoms stopped
-   * half a metre above the flagstones, with the manacle rings threaded onto them
-   * — three separate objects supported by nothing at all. None of that is visible
-   * from the viewpoint each was positioned at, which is exactly why it survived:
-   * a number nudged until the piece looked right from one doorway is a number
-   * nobody has checked from anywhere else.
+   * Each cell's east wall is pierced at 3.4m by a window a metre wide and 0.6
+   * high. The wall block is built in pieces around the hole — a sill block, a
+   * head block and two jambs — so that the hole is a real hole, and the block
+   * behind it is left out altogether: a light well one cell square, open to
+   * the sky, with the night painted on its far side. The moon is a spot light
+   * standing over the well, aimed down through the hole at the far side of the
+   * cell floor. It is held back by every piece of stone and by nothing else,
+   * and what it throws on the flagstones is the grating.
    *
-   * A piece counts as carried if it reaches the floor, reaches the vault, meets
-   * masonry, or sits on something else that does. Everything left over is
-   * floating, and is named with its measurements so the fix is a measurement
-   * rather than another nudge.
+   * The geometry is what decides where the light lands, and it is less
+   * forgiving than it looks. The wall is a metre thick, so a ray gets through
+   * only if it is inside the opening at *both* faces of the block: a window
+   * 0.6 high admits nothing steeper than thirty degrees, and at thirty degrees
+   * the light from a sill at 3.4m lands six metres away, beyond the far wall.
+   * Two attempts failed exactly so — one with the light in a tunnel behind
+   * the bars, whose only passing rays were the level ones that lit the wall
+   * opposite, and one with a taller light over the well, whose every ray
+   * clipped the underside of the head block on the way in. The window is
+   * therefore 1.3m tall, which admits fifty-two degrees, and the moon stands
+   * three and a half metres out and a metre above the wall top, at a slope
+   * of forty-six: what comes through lands on the west half of the floor,
+   * where a prisoner walks.
+   *
+   * The shaft itself is two crossed translucent planes from the window to the
+   * floor, and a handful of motes drifting in it.
    */
+  private buildMoonWindows() {
+    const m = this.materials;
+    const moteTexture = makeMoteTexture();
+    const shaftTexture = makeShaftTexture();
+    this.disposableTextures.push(moteTexture, shaftTexture);
+    const SILL = 3.0;
+    const HEAD = 4.3;
+    const shaftMaterial = new THREE.MeshBasicMaterial({
+      map: shaftTexture,
+      color: "#6d84ad",
+      transparent: true,
+      opacity: 0.1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    const moteMaterial = new THREE.PointsMaterial({
+      map: moteTexture,
+      color: "#c6d4ea",
+      size: 0.045,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+
+    for (const row of CELL_ROWS) {
+      const z = row + 1.5;
+      const cx = 45.5;
+      // Sill and head, full width; jambs either side of the hole.
+      addBox(this.scene, m.cellStone, [1.002, SILL, 1.002], [cx, SILL / 2, z]);
+      addBox(this.scene, m.cellStone, [1.002, WALL_HEIGHT - HEAD, 1.002], [cx, HEAD + (WALL_HEIGHT - HEAD) / 2, z]);
+      for (const side of [-1, 1]) {
+        addBox(this.scene, m.cellStone, [1.002, HEAD - SILL, 0.05], [cx, (SILL + HEAD) / 2, z + side * 0.475]);
+      }
+      // The bars stand near the cell face, so their shadow is thrown long
+      // across the floor.
+      for (let i = 0; i < 4; i++) {
+        const bar = addCylinder(this.scene, m.iron, 0.026, 0.026, HEAD - SILL, [45.12, (SILL + HEAD) / 2, z - 0.3 + i * 0.2], [0, 0, 0], 6);
+        this.hang(bar);
+      }
+      for (const barY of [SILL + 0.42, HEAD - 0.42]) {
+        this.hang(addCylinder(this.scene, m.iron, 0.022, 0.022, 0.9, [45.12, barY, z], [Math.PI / 2, 0, 0], 6));
+      }
+      // The night on the far side of the well, and the well's own floor, so
+      // that looking down through the bars finds stone and not the void.
+      const pane = mesh(new THREE.PlaneGeometry(1.0, WALL_HEIGHT), m.moonPane, false);
+      pane.position.set(46.98, WALL_HEIGHT / 2, z);
+      pane.rotation.y = -Math.PI / 2;
+      this.scene.add(pane);
+      addBox(this.scene, m.cellStone, [1.002, SILL - 0.3, 1.002], [46.5, (SILL - 0.3) / 2, z]);
+      // The moon, out beyond the well and above the wall top, at the slope the
+      // window admits. The cone is narrow — the opening as seen from the light
+      // is twelve degrees tall — so nothing of it spills onto the garden.
+      const moon = new THREE.SpotLight("#c2d2ee", 7.5, 0, 0.24, 0.3, 0);
+      moon.position.set(48.5, 6.4, z + 0.05);
+      moon.target.position.set(42.5, 0.1, z - 0.2);
+      moon.castShadow = true;
+      moon.shadow.mapSize.set(1024, 1024);
+      moon.shadow.bias = -0.0006;
+      moon.shadow.normalBias = 0.02;
+      moon.shadow.camera.near = 1;
+      moon.shadow.camera.far = 16;
+      this.scene.add(moon, moon.target);
+
+      // The visible shaft: from the window to where the light lands.
+      const from = new THREE.Vector3(45.0, (SILL + HEAD) / 2, z);
+      const to = new THREE.Vector3(41.9, 0.05, z - 0.25);
+      const length = from.distanceTo(to);
+      for (const roll of [0, Math.PI / 2]) {
+        const plane = new THREE.PlaneGeometry(1.0, length);
+        // The texture runs bright at +v; put +v at the window end.
+        const shaft = mesh(plane, shaftMaterial, false);
+        shaft.position.copy(from).add(to).multiplyScalar(0.5);
+        shaft.lookAt(to);
+        shaft.rotateX(Math.PI / 2);
+        shaft.rotateY(roll);
+        shaft.renderOrder = 2;
+        this.scene.add(shaft);
+      }
+      // Motes in the shaft, drifting.
+      const count = 70;
+      const positions = new Float32Array(count * 3);
+      const velocities = new Float32Array(count * 3);
+      const bounds = { x: 43.7, y: 1.9, z, sx: 1.3, sy: 1.8, sz: 0.5 };
+      for (let i = 0; i < count; i++) {
+        positions[i * 3] = bounds.x + (Math.random() - 0.5) * bounds.sx * 2;
+        positions[i * 3 + 1] = bounds.y + (Math.random() - 0.5) * bounds.sy * 2;
+        positions[i * 3 + 2] = bounds.z + (Math.random() - 0.5) * bounds.sz * 2;
+        velocities[i * 3] = (Math.random() - 0.5) * 0.04;
+        velocities[i * 3 + 1] = -0.01 - Math.random() * 0.03;
+        velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.03;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      const motes = new THREE.Points(geometry, moteMaterial);
+      motes.renderOrder = 3;
+      this.scene.add(motes);
+      this.shafts.push({ motes, bounds, velocities });
+    }
+  }
+
+  /**
+   * The lane and the garden: what the moon door opens onto.
+   *
+   * Everything here stands on the raised floor at UPPER_FLOOR and under no
+   * ceiling. The moon lights it from a spot high in the east with shadows on,
+   * so the cypresses lie across the turf and the walls throw their own dark.
+   */
+  private buildGarden() {
+    const m = this.materials;
+    const G = UPPER_FLOOR;
+
+    // The lane: a gutter along one side and three brackets with nothing in
+    // them — the lamps went with whoever last walked it.
+    for (const [x, z, facing] of [[41.98, 36, [1, 0]], [46, 31.98, [0, 1]], [51.98, 29.5, [-1, 0]]] as const) {
+      const bracket = new THREE.Group();
+      bracket.position.set(x, G + 2.2, z);
+      bracket.rotation.y = Math.atan2(-facing[1], facing[0]);
+      addBox(bracket, m.iron, [0.3, 0.03, 0.03], [0.15, 0, 0]);
+      addCylinder(bracket, m.iron, 0.07, 0.045, 0.09, [0.28, -0.03, 0], [0, 0, 0], 8);
+      this.scene.add(this.hang(bracket));
+    }
+    // Weeds along the foot of the lane walls, where the gutter runs.
+    for (let i = 0; i < 18; i++) {
+      const along = 42.5 + i * 0.5;
+      const tuft = mesh(new THREE.SphereGeometry(0.12 + (i % 3) * 0.05, 7, 5), m.cypress);
+      tuft.scale.set(1.3, 0.8, 1);
+      tuft.position.set(along, G + 0.08, i % 2 ? 32.2 : 33.8);
+      this.scene.add(tuft);
+    }
+
+    // The garden: a gravel walk from the south door to the basin and on to the
+    // north gate, cypresses along both walls, the basin with the moon in it,
+    // a bench, and in the west wall, low, the gaol's own three windows.
+    const walk = addBox(this.scene, m.gravel, [1.9, 0.02, 12.6], [52, G + 0.01, 20.7]);
+    walk.receiveShadow = true;
+    for (const [x, z] of [[49, 16], [49, 19.5], [49, 23], [55, 16], [55, 19.5], [55, 23]] as const) {
+      const tree = makeCypress(m, 6.2 + ((x + z) % 3) * 0.5);
+      tree.position.set(x, G, z);
+      tree.rotation.y = x + z;
+      this.scene.add(tree);
+    }
+    const basin = makeBasin(m);
+    basin.position.set(52, G, 20.5);
+    this.scene.add(basin);
+    this.water = basin.children.find((child) => (child as THREE.Mesh).material === m.water) as THREE.Mesh;
+    // The moon's reflection: a disc of light on the water, and a faint upward
+    // glow so the rim of the basin catches it.
+    const reflection = mesh(new THREE.CircleGeometry(0.19, 20), new THREE.MeshBasicMaterial({ color: "#e6ecfa", fog: false }), false);
+    reflection.rotation.x = -Math.PI / 2;
+    reflection.position.set(52.35, G + 0.605, 20.3);
+    this.scene.add(reflection);
+    const basinGlow = new THREE.PointLight("#9fb2d4", 1.6, 4, 2);
+    basinGlow.position.set(52.3, G + 0.9, 20.4);
+    this.scene.add(basinGlow);
+    // A bench against the east wall.
+    const bench = makeTable(m, 1.6, 0.5);
+    bench.position.set(54.6, G - 0.36, 25.6);
+    this.scene.add(bench);
+    // Low shrubs along the walls.
+    for (let i = 0; i < 14; i++) {
+      const west = i % 2 === 0;
+      const shrub = mesh(new THREE.SphereGeometry(0.35 + (i % 3) * 0.1, 8, 6), m.cypress);
+      shrub.scale.set(1.3, 0.7, 1);
+      shrub.position.set(west ? 48.5 : 55.5, G + 0.2, 14.8 + i * 0.85);
+      this.scene.add(shrub);
+    }
+    // The further gate in the north wall, which does not open. Oak, iron, and
+    // a lock with no key anywhere in the building.
+    const northGate = addBox(this.scene, m.woodTrim, [1.7, 2.6, 0.14], [52, G + 1.3, 14.08]);
+    northGate.castShadow = true;
+    for (const y of [0.5, 1.3, 2.1]) addBox(northGate, m.iron, [1.66, 0.1, 0.05], [0, y - 1.3, 0.09]);
+    for (const x of [-0.5, 0, 0.5]) addBox(northGate, m.iron, [0.06, 2.5, 0.05], [x, 0, 0.1]);
+    addBox(this.scene, m.iron, [0.16, 0.22, 0.06], [52.55, G + 1.15, 14.18]);
+    addBox(this.scene, m.gardenStone, [2.3, 0.3, 0.3], [52, G + 2.75, 14.15]);
+    this.checkWallBacking("garden north gate", 52, 14.0, "x", 1.7, 1);
+    // The gaol's windows, seen from outside: three barred slits in the west
+    // wall, each with a little of a cell's lamplight behind it. Their rows are
+    // the fourth, fifth and sixth cells', two metres above the garden floor.
+    for (const row of CELL_ROWS.slice(3)) {
+      const z = row + 1.5;
+      const glow = mesh(new THREE.PlaneGeometry(0.9, 0.6), new THREE.MeshBasicMaterial({ color: "#3d2a14", fog: false }), false);
+      glow.position.set(48.02, 3.7, z);
+      glow.rotation.y = Math.PI / 2;
+      this.scene.add(glow);
+      for (let i = 0; i < 4; i++) {
+        this.hang(addCylinder(this.scene, m.iron, 0.022, 0.022, 0.6, [48.05, 3.7, z - 0.3 + i * 0.2], [0, 0, 0], 6));
+      }
+      for (const [dy, dz, w, h] of [[0.36, 0, 0.09, 0.1], [-0.36, 0, 0.09, 0.1], [0, 0.5, 0.09, 0.82], [0, -0.5, 0.09, 0.82]] as const) {
+        const jamb = addBox(this.scene, m.gardenStone, dz === 0 ? [w, h, 1.1] : [w, h, 0.1], [48.02, 3.7 + dy, z + dz]);
+        jamb.castShadow = false;
+        this.hang(jamb);
+      }
+    }
+    // The moon over the garden and over the lane: two spots, high and to the
+    // east, with the shadows on.
+    const gardenMoon = new THREE.SpotLight("#b6c6e4", 2.3, 0, 0.32, 0.5, 0);
+    gardenMoon.position.set(76, 48, 40);
+    gardenMoon.target.position.set(52, G, 20.5);
+    gardenMoon.castShadow = true;
+    gardenMoon.shadow.mapSize.set(2048, 2048);
+    gardenMoon.shadow.bias = -0.0006;
+    gardenMoon.shadow.normalBias = 0.04;
+    gardenMoon.shadow.camera.near = 20;
+    gardenMoon.shadow.camera.far = 90;
+    this.scene.add(gardenMoon, gardenMoon.target);
+    const laneMoon = new THREE.SpotLight("#b6c6e4", 2.0, 0, 0.3, 0.5, 0);
+    laneMoon.position.set(66, 44, 56);
+    laneMoon.target.position.set(46.5, G, 34);
+    laneMoon.castShadow = true;
+    laneMoon.shadow.mapSize.set(1024, 1024);
+    laneMoon.shadow.bias = -0.0006;
+    laneMoon.shadow.normalBias = 0.04;
+    laneMoon.shadow.camera.near = 15;
+    laneMoon.shadow.camera.far = 80;
+    this.scene.add(laneMoon, laneMoon.target);
+    // Skylight fill, unshadowed and faint, so the shadowed side of a cypress is
+    // blue-black rather than black.
+    const fill = new THREE.SpotLight("#3c4c6e", 0.6, 0, 0.5, 0.6, 0);
+    fill.position.set(30, 52, 4);
+    fill.target.position.set(50, G, 24);
+    this.scene.add(fill, fill.target);
+  }
+
   /**
    * Declares a piece to be hung on a wall rather than stood on the floor.
    *
-   * The two audits divide the work between them and this is the seam. Anything
-   * fixed to masonry sits a centimetre or two proud of it to keep its faces out
-   * of the wall's own, so it can never satisfy a "does it reach the floor or the
-   * stone" test — and `checkWallBacking` already asks the question that actually
-   * matters about it, which is whether there is any masonry behind it at all.
-   *
-   * What must not happen is a piece being neither: the tribunal's crucifix stood
-   * 0.58 above the flagstones near the north wall and was audited by neither
-   * test, because the floating audit's old 0.12 margin excused it as wall-fixed
-   * and nothing had ever declared it hung.
+   * Anything fixed to masonry sits a centimetre or two proud of it to keep its
+   * faces out of the wall's own, so it can never satisfy a "does it reach the
+   * floor or the stone" test — and `checkWallBacking` already asks the question
+   * that actually matters about it, which is whether there is any masonry
+   * behind it at all.
    */
   private hang<T extends THREE.Object3D>(item: T) {
     item.userData.hung = true;
     return item;
   }
 
+  /**
+   * Reports scenery that is holding itself up.
+   *
+   * A piece counts as carried if it reaches the floor, reaches the vault, meets
+   * masonry, or sits on something else that does. Everything left over is
+   * floating, and is named with its measurements so the fix is a measurement
+   * rather than another nudge.
+   */
   private auditFloatingProps() {
     const boxes: { name: string; box: THREE.Box3 }[] = [];
     this.scene.updateMatrixWorld(true);
-    // The unit is the placed object — a chair, a lamp, a figure, a bare mesh
-    // dropped into a room — not each mesh within one. At mesh granularity every
-    // chair seat is "unsupported" because its legs are a different mesh, and the
-    // real floaters drown in a hundred of those.
     for (const child of this.scene.children) {
       if (child instanceof THREE.Light || child instanceof THREE.Camera) continue;
       if ((child as unknown as THREE.InstancedMesh).isInstancedMesh) continue;
-      if (child instanceof THREE.Line) continue;
+      if (child instanceof THREE.Line || child instanceof THREE.Points) continue;
       const mesh = child as THREE.Mesh;
-      // Wall decals and flames carry nothing and are hung, not stood.
+      // Wall decals, flames, the sky and the shafts carry nothing and are hung,
+      // not stood.
       if (mesh.isMesh && !mesh.castShadow) continue;
       if (child.userData.hung) continue;
       const box = new THREE.Box3().setFromObject(child);
       if (!box.isEmpty()) boxes.push({ name: child.userData.label ?? child.type, box });
     }
 
-    // No margin. A 0.12 slack here was letting anything standing *near* a wall
-    // count as fixed to it, which is how a crucifix hovering 0.58 above the
-    // flagstones six centimetres off the north wall of the tribunal passed the
-    // audit that exists to catch exactly that.
     const touchesMasonry = (box: THREE.Box3) => {
       for (let x = Math.floor(box.min.x); x <= Math.floor(box.max.x); x++) {
         for (let z = Math.floor(box.min.z); z <= Math.floor(box.max.z); z++) {
@@ -2742,7 +3428,6 @@ export class DungeonRenderer {
       if (box.min.y <= 0.09) continue;
       if (box.max.y >= WALL_HEIGHT - 0.14) continue;
       if (touchesMasonry(box)) continue;
-      // Carried by something that starts lower and reaches up to it.
       const carried = boxes.some(({ box: other }) => {
         if (other === box) return false;
         if (other.min.y >= box.min.y || other.max.y < box.min.y - 0.09) return false;
@@ -2769,14 +3454,11 @@ export class DungeonRenderer {
   }
 
   /**
-   * The iron fronts of the cells: bars where the plan says screen, and a hinged
-   * gate standing open where it says gate.
+   * The iron fronts of the cells: bars where the plan says screen.
    *
-   * Both are read from the model rather than placed by eye. A screen is masonry
-   * to the body and nothing to sight or sound, so the architecture has to agree
-   * with the collision exactly — bars drawn a cell away from the wall they stand
-   * in would be a cell you can see into and walk into, or one you can neither
-   * see into nor walk into, depending on which way the error went.
+   * Read from the model rather than placed by eye. A screen is masonry to the
+   * body and nothing to sight or sound, so the architecture has to agree with
+   * the collision exactly.
    */
   private buildCellFronts() {
     const m = this.materials;
@@ -2785,7 +3467,6 @@ export class DungeonRenderer {
         for (let x = front.x1; x <= front.x2; x++) {
           const cx = x + 0.5;
           const cz = y + 0.5;
-          // Stone sill and lintel, with the bar field between them.
           addBox(this.scene, m.cellStone, [1.01, 0.55, 1.01], [cx, 0.275, cz]);
           addBox(this.scene, m.cellStone, [1.01, 0.75, 1.01], [cx, WALL_HEIGHT - 0.375, cz]);
           for (let i = 0; i < 6; i++) {
@@ -2801,49 +3482,73 @@ export class DungeonRenderer {
             );
             bar.castShadow = true;
           }
-          for (const barY of [1.35, 3.05]) {
+          for (const barY of [1.35, 3.05, 4.4]) {
             addCylinder(this.scene, m.iron, 0.03, 0.03, 1.0, [cx, barY, cz], [Math.PI / 2, 0, 0], 8);
           }
         }
       }
     }
-    // The gates themselves, shut.
-    //
-    // They used to be built hung permanently open at a fixed -1.15 radians,
-    // which said the thing the premise wanted said — nothing here is locked
-    // against her — but said it as scenery, once, and then never again. A gate
-    // that was already open when the player arrived is a gate they have no
-    // reason to notice. A gate that is shut, and swings while they walk at it,
-    // says the same thing every single time, and says it about *them*.
-    //
-    // Each leaf is built at its hinge with the bar field running out along +Z,
-    // so the whole group can be turned by `render` to whatever the door state
-    // says without any of the geometry needing to know where it is.
+  }
+
+  /**
+   * Every door that moves, built at its hinge so `turnDoors` can swing it.
+   *
+   * Each leaf is built with its length running out along the door's `along`
+   * axis from a group standing on the hinge, so the whole group can be turned
+   * to whatever the door state says without the geometry knowing where it is.
+   */
+  private buildDoorLeaves() {
+    const m = this.materials;
     for (const door of DOORS) {
-      if (!door.id.endsWith("-gate")) continue;
+      if (door.leaf === "shut-door") continue;
       const leaf = new THREE.Group();
-      leaf.position.set(door.hinge[0], 0, door.hinge[1]);
-      const spacing = door.width / 5;
-      for (let i = 0; i < 5; i++) {
-        addCylinder(leaf, m.iron, 0.032, 0.032, 3.1, [0, 1.62, spacing * (i + 0.5)], [0, 0, 0], 8);
+      const floor = door.floor ?? 0;
+      leaf.position.set(door.hinge[0], floor, door.hinge[1]);
+      // Rotate the group so its local +Z runs along the door's `along`.
+      leaf.rotation.y = Math.atan2(door.along[0], door.along[1]);
+      const w = door.width;
+      if (door.leaf === "iron-gate") {
+        const spacing = w / 5;
+        for (let i = 0; i < 5; i++) {
+          addCylinder(leaf, m.iron, 0.032, 0.032, 3.4, [0, 1.75, spacing * (i + 0.5)], [0, 0, 0], 8);
+        }
+        for (const barY of [0.22, 1.75, 3.3]) {
+          addBox(leaf, m.iron, [0.05, 0.075, w], [0, barY, w / 2]);
+        }
+        addCylinder(leaf, m.iron, 0.055, 0.055, 3.5, [0, 1.75, 0], [0, 0, 0], 8);
+        // Over the gate, more bars to the vault: the doorway is 5.4 high and
+        // the leaf 3.5, and what is above it is not a way out either.
+        for (let i = 0; i < 5; i++) {
+          addCylinder(leaf, m.iron, 0.032, 0.032, WALL_HEIGHT - 3.55, [0, 3.55 + (WALL_HEIGHT - 3.55) / 2, spacing * (i + 0.5)], [0, 0, 0], 6);
+        }
+      } else if (door.leaf === "stone-panel") {
+        // Inside the slit, its face a hand's breadth back from the cell wall,
+        // so from Marcello's side it is a recess of stone and not a door.
+        const slab = addBox(leaf, m.cellStone, [0.16, 2.66, w], [-0.08, 1.33, w / 2]);
+        slab.receiveShadow = true;
+        addCylinder(leaf, m.iron, 0.03, 0.03, 0.1, [-0.08, 2.7, 0.04], [0, 0, 0], 6);
+      } else if (door.leaf === "moon-door") {
+        // The leaf hangs on the stair side of its hinge line, flush with the
+        // wall face, straps and lock toward the stair: that is the side it is
+        // seen from until it opens, and the side the key goes in.
+        const plank = addBox(leaf, m.woodTrim, [0.12, 2.4, w], [-0.06, 1.2, w / 2]);
+        plank.receiveShadow = true;
+        for (const y of [0.4, 1.2, 2.0]) addBox(leaf, m.iron, [0.05, 0.1, w - 0.06], [-0.13, y, w / 2]);
+        for (const along of [0.3, w / 2, w - 0.3]) addBox(leaf, m.iron, [0.05, 2.3, 0.06], [-0.13, 1.2, along]);
+        addBox(leaf, m.iron, [0.06, 0.26, 0.18], [-0.14, 1.1, w - 0.22]);
+        addCylinder(leaf, m.iron, 0.045, 0.045, 0.14, [-0.14, 1.1, w - 0.2], [0, 0, Math.PI / 2], 8);
+        addBox(leaf, m.iron, [0.03, 0.05, 0.02], [-0.18, 1.1, w - 0.2]);
       }
-      for (const barY of [0.22, 1.62, 3.02]) {
-        addBox(leaf, m.iron, [0.05, 0.075, door.width], [0, barY, door.width / 2]);
-      }
-      // The hanging stile, which is the part that reads as a hinge.
-      addCylinder(leaf, m.iron, 0.055, 0.055, 3.2, [0, 1.62, 0], [0, 0, 0], 8);
       leaf.traverse((item) => {
         if ((item as THREE.Mesh).isMesh) (item as THREE.Mesh).castShadow = true;
       });
-      this.gateLeaves.set(door.id, leaf);
+      this.doorLeaves.set(door.id, leaf);
       this.scene.add(leaf);
     }
   }
 
   private buildPatrols() {
     for (const npc of NPCS) {
-      // Appearance comes from the roster entry, so a figure cannot be given a
-      // body by one list and a round by another.
       const figure = makePerson(this.materials, npc.appearance);
       figure.userData.patrol = npc.id;
       this.patrols.push({ id: npc.id, figure });
@@ -2855,22 +3560,32 @@ export class DungeonRenderer {
   /**
    * Turn each leaf to wherever its door has got to.
    *
-   * A group rotated by t about Y sends its local +Z to (sin t, cos t), and the
-   * model's leaf end is `along` turned by `swing * open`, which sends (0,1) to
-   * (-sin, cos). Equal only when t is the negative of the model's angle — so the
-   * sign here is not a fudge, it is the one value that keeps the iron the player
-   * can see in the same place as the iron the player collides with.
+   * The leaf group's local +Z runs along `along`. Turning the group by t about
+   * Y turns that toward -X for positive t; the model's positive swing turns the
+   * free end anticlockwise in the x/y plane, which is the same sense. So the
+   * group's rotation is the negative of the model's angle, and that sign is the
+   * one value that keeps the iron the player can see in the same place as the
+   * iron the player collides with.
    */
   private turnDoors() {
     for (const state of this.doorStates) {
-      const leaf = this.gateLeaves.get(state.id);
+      const leaf = this.doorLeaves.get(state.id);
       const door = DOORS.find((entry) => entry.id === state.id);
       if (!leaf || !door) continue;
-      leaf.rotation.y = -door.swing * state.open;
+      leaf.rotation.y = Math.atan2(door.along[0], door.along[1]) - door.swing * state.open;
     }
   }
 
-  render(player: PlayerView, time: number, dtMs = 16.7) {
+  /** Takes a thing off its hook: the renderer's half of picking up a key. */
+  take(id: string) {
+    const item = this.takeable.get(id);
+    if (!item) return false;
+    item.visible = false;
+    this.takeable.delete(id);
+    return true;
+  }
+
+  render(player: PlayerView, time: number, dtMs = 16.7, held: ReadonlySet<string> = new Set()) {
     const width = Math.max(1, this.renderer.domElement.clientWidth);
     const height = Math.max(1, this.renderer.domElement.clientHeight);
     const targetWidth = Math.floor(width * Math.min(window.devicePixelRatio || 1, 1.65));
@@ -2905,7 +3620,7 @@ export class DungeonRenderer {
     // The doors *are* given the player, and the NPCs are not. That asymmetry is
     // the whole access model: the fabric of the building yields to her and the
     // people in it never register that she is there.
-    updateDoors(this.doorStates, DOORS, player.x, player.y, dtMs);
+    updateDoors(this.doorStates, DOORS, player.x, player.y, dtMs, held);
     this.turnDoors();
 
     updateNpcs(this.npcStates, NPCS, dtMs);
@@ -2920,35 +3635,72 @@ export class DungeonRenderer {
       );
       // The model faces -Z, and rotating it by t sends that to
       // (-sin t, -cos t). Setting that equal to (cos dir, sin dir) gives
-      // t = -PI/2 - dir. It was +PI/2 - dir, which is the same angle turned
-      // through half a circle: every figure in the building walked backwards,
-      // and had done since patrols were added.
+      // t = -PI/2 - dir.
       patrol.figure.rotation.y = -Math.PI / 2 - state.heading;
 
       const gait = this.stride.get(patrol.id);
       if (!gait) continue;
-      // Cadence from distance, not from the clock. One full stride cycle per
-      // 0.82m walked, so a figure that stops stops striding — which is the
-      // difference between walking and being slid along the floor.
       const moved = state.travelled - gait.travelled;
       gait.travelled = state.travelled;
       gait.phase += (moved / STRIDE_CYCLE) * Math.PI * 2;
-      // Blend towards a stride when moving and towards stillness when not, so a
-      // figure arriving at a post settles instead of freezing mid-step.
       const walking = state.phase === "walk" && moved > 1e-5;
       gait.blend += ((walking ? 1 : 0) - gait.blend) * Math.min(1, dtMs / 160);
       animateWalk(patrol.figure, gait.phase, gait.blend);
-      // A trace of vertical carry on the stride, in step with the legs rather
-      // than on a timer of its own.
       patrol.figure.position.y += Math.abs(Math.sin(gait.phase)) * 0.014 * gait.blend;
     }
+
+    // The motes drift down the shaft and are put back at the top.
+    for (const shaft of this.shafts) {
+      const attribute = shaft.motes.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const array = attribute.array as Float32Array;
+      const seconds = dtMs / 1000;
+      for (let i = 0; i < array.length; i += 3) {
+        array[i] += (shaft.velocities[i] + Math.sin(time * 0.0007 + i) * 0.01) * seconds;
+        array[i + 1] += shaft.velocities[i + 1] * seconds;
+        array[i + 2] += (shaft.velocities[i + 2] + Math.cos(time * 0.0009 + i) * 0.008) * seconds;
+        const b = shaft.bounds;
+        if (array[i + 1] < b.y - b.sy || Math.abs(array[i] - b.x) > b.sx || Math.abs(array[i + 2] - b.z) > b.sz) {
+          array[i] = b.x + (Math.random() - 0.5) * b.sx * 2;
+          array[i + 1] = b.y + b.sy;
+          array[i + 2] = b.z + (Math.random() - 0.5) * b.sz * 2;
+        }
+      }
+      attribute.needsUpdate = true;
+    }
+
+    // The demon's eyes. Inside Marcello's cell they follow, by a little; from
+    // anywhere else they are paint.
+    const inMarcello = player.x > 41 && player.x < 45 && player.y > 4 && player.y < 7;
+    for (const pupil of this.pupils) {
+      const targetX = inMarcello ? THREE.MathUtils.clamp((player.x - pupil.restX) * 0.02, -0.018, 0.018) : 0;
+      const targetY = inMarcello ? THREE.MathUtils.clamp((EYE_HEIGHT - pupil.restY) * 0.02, -0.012, 0.012) : 0;
+      pupil.mesh.position.x += (pupil.restX + targetX - pupil.mesh.position.x) * 0.04;
+      pupil.mesh.position.y += (pupil.restY + targetY - pupil.mesh.position.y) * 0.04;
+    }
+    if (this.spider) {
+      const t = (Math.sin(time * 0.00021) + 1) / 2;
+      const eased = t * t * (3 - 2 * t);
+      this.spider.mesh.position.lerpVectors(this.spider.from, this.spider.to, eased);
+      this.spider.mesh.rotation.z = Math.atan2(this.spider.to.y, this.spider.to.x) + (Math.cos(time * 0.00021) > 0 ? 0 : Math.PI);
+    }
+    if (this.water) {
+      this.water.position.y = 0.6 + Math.sin(time * 0.0013) * 0.004;
+    }
+
+    // Shadows on alternate frames, starting with the first: see the
+    // constructor. The first frame *must* run the shadow pass, because that is
+    // where the maps are allocated — without it every shadow sampler in the
+    // building is bound to an empty texture for a frame, and WebGL says so
+    // several hundred times.
+    this.frame += 1;
+    this.renderer.shadowMap.needsUpdate = this.frame % 2 === 1;
     this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
     this.disposableTextures.forEach((texture) => texture.dispose());
     this.scene.traverse((item) => {
-      if (item instanceof THREE.Mesh || item instanceof THREE.InstancedMesh) {
+      if (item instanceof THREE.Mesh || item instanceof THREE.InstancedMesh || item instanceof THREE.Points) {
         item.geometry?.dispose();
         const materials = Array.isArray(item.material) ? item.material : [item.material];
         materials.forEach((material) => material.dispose());

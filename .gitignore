@@ -45,3 +45,4 @@ tsconfig.tsbuildinfo
 
 # local editor / agent settings (the shared launch.json is committed)
 .claude/settings.local.json
+.scratch/

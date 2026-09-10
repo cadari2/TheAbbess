@@ -39,6 +39,9 @@ const {
   createDoorStates,
   updateDoors,
   doorBlocksAt,
+  lockedDoorNear,
+  MOON_KEY,
+  UPPER_FLOOR,
   PLAYER_RADIUS,
 } = world;
 
@@ -93,8 +96,8 @@ test("every discovery is reachable and correctly labelled", () => {
   }
 });
 
-test("all ten places from the romance are present", () => {
-  assert.equal(DISCOVERIES.length, 10);
+test("the ten places from the romance are present, and the four the adaptation adds", () => {
+  assert.equal(DISCOVERIES.length, 15);
   for (const title of [
     "The Prison Gate",
     "A Familiar’s Dark Chamber",
@@ -106,12 +109,24 @@ test("all ten places from the romance are present", () => {
     "The Masked Official",
     "The Chamber of Groans",
     "The Hidden Stair",
+    // The adaptation's own.
+    "A Poniard on the Flagstones",
+    "Where the Accused Waits",
+    "The Board of Keys",
+    "The Key of the Moon Door",
+    "The Moonlit Garden",
   ]) {
     assert.ok(
       DISCOVERIES.some((d) => d.title === title),
       `missing place: ${title}`,
     );
   }
+  // Exactly one thing in the building is taken rather than read, and it is
+  // the key the moon door answers to.
+  const taken = DISCOVERIES.filter((d) => d.grants);
+  assert.equal(taken.length, 1);
+  assert.equal(taken[0].grants, MOON_KEY);
+  assert.ok(DOORS.some((d) => d.requiresKey === MOON_KEY), "no door answers to the key");
 });
 
 test("every walkable position is given a room name", () => {
@@ -205,10 +220,10 @@ test("figures walk their rounds, stop at their posts, and speak on arrival", () 
   }
   assert.ok(everWalked, "the gaoler never walked");
   assert.ok(everDwelt, "the gaoler never stopped");
-  assert.ok(
-    Math.hypot(keeper.x - start.x, keeper.y - start.y) < 6,
-    "the gaoler left his corridor",
-  );
+  // He keeps to his corridor and his lodge: the whole of his round lies in
+  // the east range.
+  assert.ok(keeper.x > 33 && keeper.x < 40 && keeper.y > 3 && keeper.y < 31, "the gaoler left his range");
+  void start;
   // Every authored line is reached, so none is written into a node the round
   // never arrives at.
   const authored = NPCS.flatMap((npc) => npc.route.filter((n) => n.say).map((n) => `${npc.id}:${n.say}`));
@@ -238,13 +253,13 @@ test("a voice carries through iron and not through stone", () => {
   const marcello = states.find((s) => s.id === "marcello");
   marcello.saying = "Bendetta.";
   marcello.sayingMs = 5000;
-  const throughBars = overheardAt(model, [marcello], NPCS, 29, 5.3);
+  const throughBars = overheardAt(model, [marcello], NPCS, 38.3, 5.3);
   assert.ok(throughBars, "nothing audible from the corridor outside the cell");
   assert.equal(throughBars.id, "marcello");
-  assert.equal(overheardAt(model, [marcello], NPCS, 22, 8), null, "audible through the rock");
+  assert.equal(overheardAt(model, [marcello], NPCS, 33, 8), null, "audible through the rock");
   // And the gaol's own length defeats it: six cells down the corridor is out of
   // earshot even though nothing but air is in the way.
-  assert.equal(overheardAt(model, [marcello], NPCS, 29, 24.5), null, "audible the length of the corridor");
+  assert.equal(overheardAt(model, [marcello], NPCS, 38.3, 24.5), null, "audible the length of the corridor");
 });
 
 test("turning takes the short way round", () => {
@@ -260,10 +275,13 @@ test("voices do not carry through masonry", () => {
   assert.equal(hasLineOfSight(model, at("gate").x, at("gate").y, at("maddalena").x, at("maddalena").y), false);
   // Within a room, sound carries.
   assert.equal(hasLineOfSight(model, at("marcello").x, at("marcello").y, at("marcello").x, at("marcello").y - 1), true);
-  // The paired cells are joined by the keeper's slit, a straight vertical shaft.
-  // A voice passing between them is a property of the plan, not a leak: it is
-  // how "one groan, then a woman's cry" reaches a listener in the other cell.
-  assert.equal(hasLineOfSight(model, at("marcello").x, at("marcello").y, at("maddalena").x, at("maddalena").y), true);
+  // The paired cells are joined by the keeper's slit, a straight shaft one cell
+  // wide beside the demon. A voice passing along it is a property of the plan,
+  // not a leak: it is how "one groan, then a woman's cry" reaches a listener in
+  // the other cell. Off the slit's line, the party wall is stone.
+  const slit = model.openings.find((o) => o.id === "keepers-slit");
+  assert.equal(hasLineOfSight(model, slit.x1 + 0.5, slit.y1 - 0.6, slit.x1 + 0.5, slit.y2 + 1.6), true);
+  assert.equal(hasLineOfSight(model, at("marcello").x, at("marcello").y, at("maddalena").x, at("maddalena").y), false);
 });
 
 test("every discovery can be approached closely enough to examine", () => {
@@ -340,8 +358,8 @@ test("the cells are fronted with iron, not walled up", () => {
     }
   }
   // And open to the eye: a prisoner is visible from the corridor outside.
-  assert.equal(hasLineOfSight(model, 29, 5.3, 32.5, 5.3), true);
-  assert.equal(hasLineOfSight(model, 29, 9.3, 32.5, 9.3), true);
+  assert.equal(hasLineOfSight(model, 38.3, 5.3, 43.5, 5.3), true);
+  assert.equal(hasLineOfSight(model, 38.3, 9.3, 43.5, 9.3), true);
 });
 
 test("the moon stair climbs, and climbs to the door", () => {
@@ -351,15 +369,21 @@ test("the moon stair climbs, and climbs to the door", () => {
   assert.ok(landing, "no landing in the plan");
   // Level floor at the foot, rising all the way to the landing's height.
   const axis = (flight.x1 + flight.x2) / 2;
-  assert.equal(groundHeightAt(model, axis, 34.4), 0);
-  assert.equal(groundHeightAt(model, axis, 30.2), landing.height);
+  assert.equal(groundHeightAt(model, axis, flight.y2 + 1.4), 0);
+  assert.equal(groundHeightAt(model, axis, landing.y1 + 0.2), landing.height);
   assert.ok(landing.height > 1.2, "the climb is not worth the name");
+  assert.equal(landing.height, UPPER_FLOOR);
   // Monotonic: no tread drops below the one below it.
   let previous = -1;
-  for (let y = 34.9; y >= 30.0; y -= 0.05) {
+  for (let y = flight.y2 + 1.9; y >= landing.y1; y -= 0.05) {
     const height = groundHeightAt(model, axis, y);
     assert.ok(height >= previous - 1e-9, `the stair falls at y=${y.toFixed(2)}`);
     previous = height;
+  }
+  // And the height carries on through the door, down the lane and into the
+  // garden without a step anywhere: the escape route is one floor.
+  for (const [x, y] of [[43, 38.5], [43, 36], [47, 33], [51, 30], [52, 20], [49, 15]]) {
+    assert.equal(groundHeightAt(model, x, y), UPPER_FLOOR, `the floor drops at ${x},${y}`);
   }
   // The door is entered on level floor, not halfway up the flight.
   const door = model.openings.find((o) => o.id === "groans-moonstair");
@@ -509,11 +533,79 @@ test("no sightline runs the length of the building", () => {
     // effect is that you can see all six identical fronts at once.
     scan(cells, `row ${y}`);
   }
+  const corridor = model.rooms.find((room) => room.id === "cell-corridor");
   for (let x = 0; x < model.width; x++) {
-    if (x === 28 || x === 29) continue;
+    if (x >= corridor.x1 && x <= corridor.x2) continue;
     const cells = [];
     for (let y = 0; y < model.height; y++) cells.push(isWallAt(model, x + 0.5, y + 0.5));
     scan(cells, `column ${x}`);
   }
   assert.ok(longest.run <= 20, `a clear run of ${longest.run} cells at ${longest.where}`);
+});
+
+test("the moon door is locked until the key is in hand, and then it yields", () => {
+  const states = createDoorStates(DOORS);
+  const door = DOORS.find((d) => d.id === "moon-door");
+  assert.ok(door, "no moon door");
+  assert.equal(door.requiresKey, MOON_KEY);
+  const mid = [
+    door.hinge[0] + (door.along[0] * door.width) / 2,
+    door.hinge[1] + (door.along[1] * door.width) / 2,
+  ];
+  // Standing on the landing at the door, without the key, for a long time.
+  const atDoor = [mid[0], mid[1] + 1.0];
+  updateDoors(states, DOORS, atDoor[0], atDoor[1], 60000);
+  assert.equal(states.find((s) => s.id === door.id).open, 0, "the door opened without the key");
+  assert.equal(doorBlocksAt(states, DOORS, mid[0], mid[1], PLAYER_RADIUS), true);
+  // And the HUD can say why.
+  assert.equal(lockedDoorNear(DOORS, atDoor[0], atDoor[1], new Set())?.id, "moon-door");
+  assert.equal(lockedDoorNear(DOORS, atDoor[0], atDoor[1], new Set([MOON_KEY])), null);
+  // With the key, it swings like the rest, and the way through is clear.
+  updateDoors(states, DOORS, atDoor[0], atDoor[1], door.travelMs, new Set([MOON_KEY]));
+  assert.equal(states.find((s) => s.id === door.id).open, 1);
+  assert.equal(doorBlocksAt(states, DOORS, mid[0], mid[1], PLAYER_RADIUS), false);
+  // The key hangs somewhere she can walk to, and the door leads somewhere
+  // walkable: the garden is reachable from the spawn once the door is open.
+  const key = DISCOVERIES.find((d) => d.grants === MOON_KEY);
+  assert.ok(key, "no key in the building");
+  const reachable = reachableCells(model, SPAWN.x, SPAWN.y);
+  assert.ok(reachable.has(`${Math.floor(key.x)},${Math.floor(key.y)}`), "the key cannot be reached");
+  const garden = DISCOVERIES.find((d) => d.id === "garden");
+  assert.ok(reachable.has(`${Math.floor(garden.x)},${Math.floor(garden.y)}`), "the garden cannot be reached");
+});
+
+test("the panel beside the demon opens onto the keeper's slit", () => {
+  const slit = model.openings.find((o) => o.id === "keepers-slit");
+  assert.ok(slit, "no slit in the plan");
+  assert.equal(slit.hidden, true);
+  const panel = DOORS.find((d) => d.id === "keepers-panel");
+  assert.ok(panel, "no panel on the slit");
+  // The leaf hangs across the slit's own cell.
+  assert.ok(panel.hinge[0] >= slit.x1 && panel.hinge[0] <= slit.x2 + 1, "the panel is not in the slit in x");
+  assert.ok(panel.hinge[1] >= slit.y1 && panel.hinge[1] <= slit.y2 + 1, "the panel is not in the slit in y");
+  // Shut, it is wall; open, a body can pass through the slit.
+  const states = createDoorStates(DOORS);
+  const midX = panel.hinge[0] + (panel.along[0] * panel.width) / 2;
+  assert.equal(doorBlocksAt(states, DOORS, midX, panel.hinge[1], PLAYER_RADIUS), true);
+  updateDoors(states, DOORS, midX, panel.hinge[1] - 0.6, panel.travelMs);
+  assert.equal(states.find((s) => s.id === panel.id).open, 1);
+  let passable = false;
+  for (let x = slit.x1 + 0.3; x <= slit.x1 + 0.7; x += 0.02) {
+    if (!doorBlocksAt(states, DOORS, x, slit.y1 + 0.5, PLAYER_RADIUS) && !isBlockedAt(model, x, slit.y1 + 0.5)) passable = true;
+  }
+  assert.ok(passable, "the open panel still blocks the slit");
+});
+
+test("the lane and the garden are roofless, and nothing else is", () => {
+  const open = model.rooms.filter((room) => room.openAir).map((room) => room.id);
+  assert.deepEqual(open.sort(), ["garden", "moon-lane", "moon-lane-cross", "moon-lane-north"]);
+  // Every open-air room stands on the upper floor, wall to wall.
+  for (const room of model.rooms.filter((r) => r.openAir)) {
+    const floor = world.floorExtent(room);
+    for (let y = floor.y1 + 0.5; y <= floor.y2 + 0.5; y += 1) {
+      for (let x = floor.x1 + 0.5; x <= floor.x2 + 0.5; x += 1) {
+        assert.equal(groundHeightAt(model, x, y), UPPER_FLOOR, `${room.id} is at ground level at ${x},${y}`);
+      }
+    }
+  }
 });

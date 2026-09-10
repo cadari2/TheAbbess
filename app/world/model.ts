@@ -39,6 +39,12 @@ export type Room = {
   x2: number;
   y2: number;
   material: WallMaterial;
+  /**
+   * Roofless: the lane beyond the moon door and the garden it leads to. The
+   * renderer lays no ceiling over an open-air room and lets the sky in, and the
+   * moon lights it. Everything else in the building is roofed.
+   */
+  openAir?: boolean;
 };
 
 /**

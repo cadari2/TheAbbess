@@ -197,8 +197,8 @@ await page.screenshot({ path: `${outDir}/03-after-walk.png` });
 //
 // Rewritten to assert the property rather than the address: whatever the plan
 // does next, driving into a wall must not end with the player inside it, and
-// the approach bore runs x 4..6 so a body of radius 0.28 can never legitimately
-// stand outside 4.28..5.72.
+// the approach bore runs x 5..7 so a body of radius 0.28 can never legitimately
+// stand outside 5.28..6.72.
 await settle();
 await press("a", 4000);
 const wall = await position();
@@ -211,7 +211,7 @@ const clear = await page.evaluate(
 );
 check(
   "collision keeps the player inside",
-  clear && wall.x > 4.2 && wall.x < 5.8,
+  clear && wall.x > 5.2 && wall.x < 6.8,
   `at ${wall.x.toFixed(2)},${wall.y.toFixed(2)}, ${clear ? "clear of masonry" : "inside masonry"}`,
 );
 await page.setViewportSize({ width: 1280, height: 720 });
@@ -239,7 +239,7 @@ const examined = [];
 // Every start point that stands within examining range of a discovery, so the
 // check exercises the whole record rather than whichever three happened to be
 // close enough.
-for (const start of ["gate", "office", "tribunal", "marcello", "vault", "groans", "moon"]) {
+for (const start of ["gate", "office", "passage", "angle", "anteroom", "tribunal", "marcello", "maddalena", "lodge", "wardrobe", "vault", "key", "groans", "moon", "garden"]) {
   const target = start ? `${url}/?start=${start}` : url;
   await page.goto(target, { waitUntil: "networkidle" });
   await page.click("text=TAKE UP THE CLOAK");
@@ -275,8 +275,8 @@ const stairHeights = await page.evaluate(async () => {
   const world = await import("/app/world/index.ts");
   const model = world.WORLD_MODEL;
   return {
-    foot: world.groundHeightAt(model, 28.5, 34.4),
-    head: world.groundHeightAt(model, 28.5, 30.2),
+    foot: world.groundHeightAt(model, 43, 45.4),
+    head: world.groundHeightAt(model, 43, 39.6),
   };
 });
 check(
@@ -284,6 +284,36 @@ check(
   stairHeights.head - stairHeights.foot > 1.2,
   `foot ${stairHeights.foot}, head ${stairHeights.head}`,
 );
+
+// The key, and the door it answers to. Without it the door stays shut against
+// the player; taken from its nail, it opens the way to the garden.
+await page.goto(`${url}/?start=landing`, { waitUntil: "networkidle" });
+await page.click("text=TAKE UP THE CLOAK");
+await page.waitForSelector("canvas.world");
+await page.waitForTimeout(1500);
+check("the moon door announces itself locked", await page.locator(".overheard.locked").isVisible().catch(() => false));
+await page.screenshot({ path: `${outDir}/08-locked.png` });
+await page.goto(`${url}/?start=key`, { waitUntil: "networkidle" });
+await page.click("text=TAKE UP THE CLOAK");
+await page.waitForSelector("canvas.world");
+await page.waitForTimeout(1500);
+const takePrompt = await page.locator(".examine-prompt").innerText().catch(() => "");
+check("the key offers itself to be taken", takePrompt.includes("TAKE"), takePrompt.replace(/\s+/g, " "));
+await page.keyboard.press("e");
+await page.waitForTimeout(500);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(400);
+check("the key is in hand once taken", await page.locator(".location-card .held").isVisible().catch(() => false));
+await page.goto(`${url}/?start=landing&held=moon-key`, { waitUntil: "networkidle" });
+await page.click("text=TAKE UP THE CLOAK");
+await page.waitForSelector("canvas.world");
+await page.waitForTimeout(6000);
+const doorOpen = await page.evaluate(() => {
+  const leaf = document.querySelector(".overheard.locked");
+  return leaf === null;
+});
+check("with the key the door does not read as locked", doorOpen);
+await page.screenshot({ path: `${outDir}/09-door-with-key.png` });
 
 check("no uncaught errors or console errors", failures.length === 0, failures.join(" | "));
 

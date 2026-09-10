@@ -1,27 +1,31 @@
 import * as THREE from "three";
 import { DungeonRenderer } from "../app/three-world";
 
-const W = 36, H = 28;
-function createWorld() {
-  const grid: string[][] = Array.from({ length: H }, () => Array(W).fill("1"));
-  const boundary = (x1:number,y1:number,x2:number,y2:number,material="1") => {
-    for (let y=y1;y<=y2;y++) for (let x=x1;x<=x2;x++)
-      grid[y][x] = (x===x1||x===x2||y===y1||y===y2) ? material : "0";
-  };
-  const carve = (x1:number,y1:number,x2:number,y2:number) => {
-    for (let y=y1;y<=y2;y++) for (let x=x1;x<=x2;x++) grid[y][x] = "0";
-  };
-  boundary(2,22,8,26,"4"); boundary(2,17,8,21,"1"); carve(5,21,5,22); carve(5,6,6,17);
-  boundary(9,3,24,12,"2"); carve(6,8,9,9); carve(15,12,16,17);
-  boundary(27,4,33,10,"3"); carve(24,7,27,8); carve(16,14,27,16); carve(27,15,27,16);
-  boundary(27,13,33,19,"3"); carve(8,19,10,20); boundary(10,18,14,22,"4");
-  carve(14,20,17,21); boundary(17,18,22,24,"1"); carve(22,21,24,22);
-  boundary(24,20,30,26,"4"); carve(30,23,32,24); boundary(32,21,34,26,"1");
-  return grid;
-}
+import { WORLD } from "../app/world-data";
 
 const canvas = document.getElementById("c") as HTMLCanvasElement;
-const renderer = new DungeonRenderer(canvas, createWorld());
+const renderer = new DungeonRenderer(canvas, WORLD);
+
+// `?hide=characters` blanks every character-shaded mesh before the first frame,
+// for telling apart which material a WebGL warning belongs to.
+{
+  const hide = new URLSearchParams(location.search).get("hide");
+  const scene = (renderer as unknown as { scene: THREE.Scene }).scene;
+  if (hide === "characters") {
+    scene.traverse((item) => {
+      const material = (item as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
+      if (material?.isShaderMaterial) item.visible = false;
+    });
+  }
+  // `?moonshadow=0` switches the cell gratings' moon spots to unshadowed, for
+  // telling a light that is occluded from one that is not reaching at all.
+  if (new URLSearchParams(location.search).get("moonshadow") === "0") {
+    scene.traverse((item) => {
+      const light = item as THREE.SpotLight;
+      if (light.isSpotLight && light.position.x > 48 && light.position.x < 49) light.castShadow = false;
+    });
+  }
+}
 
 // Camera pose driven by URL hash: #x,z,dir,pitch
 function pose() {

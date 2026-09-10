@@ -909,3 +909,12 @@ kbd {
     transition: none !important;
   }
 }
+
+.location-card .held {
+  margin-top: 6px;
+  color: #b9c7de;
+  letter-spacing: .1em;
+}
+
+.overheard.locked span { color: #9fb2d0; }
+.overheard.locked p { color: #c9d4e6; }

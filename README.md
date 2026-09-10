@@ -9,6 +9,13 @@ places connect the gate, offices, tribunal, cells and concealed escape route.
 Built with React and [three.js](https://threejs.org/) on
 [vinext](https://github.com/cloudflare/vinext).
 
+The building is a circuit: gate, office, the passage of high lamps and its
+angles, the anteroom, the tribunal, the bent passage, six cells off the gaoler's
+corridor, the lower passage, the Chamber of Groans, the password vault, the
+wardrobe. Off the chamber, the hidden stair climbs to a locked door. The key
+hangs at the masked watcher's post; taken, it opens the door on a lane and a
+walled garden under the moon.
+
 ## Prerequisites
 
 - Node.js `>=22.13.0`
@@ -51,6 +58,13 @@ still show their texture. A few rules keep it coherent.
 - **Wall blocks span whole grid cells.** A room's inner wall face is at the
   cell boundary, not its centre — decoration placed half a metre short of that
   disappears inside the masonry.
+- **The ceiling is laid a cell at a time**, and not at all over a room the plan
+  marks `openAir`. The lane and the garden have sky; everything else has vault.
+- **The moon is a spot light with shadows.** Through a cell's grating it stands
+  outside the wall at the slope the window admits — a metre-thick wall passes
+  nothing steeper than its opening's height allows — and what it throws on the
+  floor is the bars. Shadow maps refresh on alternate frames, starting with the
+  first.
 
 ### Inspecting the world
 
@@ -62,7 +76,8 @@ npx vite --config preview/vite.config.mts
 ```
 
 - `/` renders the dungeon. The URL hash is the camera pose, `#x,z,yaw,pitch`,
-  so `#18.55,10,-1.5708,0` drops you in front of the prisoner.
+  so `#38.3,9.4,0,0.16` looks through the bars into Maddalena's cell and
+  `#52,24,-1.5708,0` stands in the garden.
 - `/lab.html` lines every character up on a neutral lit turntable. Call
   `setView(orbit, distance, height)` and `focus(index)` from the console.
 

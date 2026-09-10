@@ -1,5 +1,6 @@
 import { isWallAt } from "./derive.ts";
 import type { DerivedWorld } from "./model.ts";
+import { CELL_GATE_ROWS } from "./plan.ts";
 
 /**
  * Prop collision volumes.
@@ -20,64 +21,87 @@ export type DungeonCollider =
   | { shape: "circle"; x: number; z: number; radius: number };
 
 /** Cell gate rows, shared with the renderer's pallets and the door hinges. */
-export const CELL_ROWS = [4, 8, 12, 16, 20, 24] as const;
+export const CELL_ROWS = CELL_GATE_ROWS;
 
 export const DUNGEON_COLLIDERS: DungeonCollider[] = [
   // The approach. The door at the player's back is a real solid, not a painted
   // one: it is here so that walking into it stops you, which is the only way the
   // first thing the game says about this place gets said at all.
-  { shape: "box", x: 5, z: 34.9, halfX: 0.95, halfZ: 0.12 },
+  { shape: "box", x: 6, z: 48.9, halfX: 0.95, halfZ: 0.12 },
 
-  // The gate hall.
-  { shape: "box", x: 6, z: 26.6, halfX: 2.6, halfZ: 0.18 },
-  { shape: "circle", x: 3.6, z: 24.6, radius: 0.42 },
-  { shape: "box", x: 10.2, z: 24.4, halfX: 0.48, halfZ: 0.48 },
+  // The gate hall: the counter across it, a barrel, a chest.
+  { shape: "box", x: 6.75, z: 40.6, halfX: 2.75, halfZ: 0.18 },
+  { shape: "circle", x: 3.2, z: 38.4, radius: 0.42 },
+  { shape: "box", x: 10.6, z: 38.2, halfX: 0.48, halfZ: 0.48 },
 
-  // The outer office.
-  { shape: "box", x: 5.15, z: 19.4, halfX: 1.3, halfZ: 0.62 },
-  { shape: "circle", x: 4.35, z: 18.48, radius: 0.4 },
-  { shape: "circle", x: 5.95, z: 18.48, radius: 0.4 },
+  // The outer office: the familiars' desk and their two chairs.
+  { shape: "box", x: 6, z: 31.4, halfX: 1.3, halfZ: 0.62 },
+  { shape: "circle", x: 5.2, z: 30.48, radius: 0.4 },
+  { shape: "circle", x: 6.8, z: 30.48, radius: 0.4 },
 
-  // The tribunal, turned. The long table now lies along the room's long axis
-  // rather than across it, so the bench sits in one row facing the accused
-  // instead of in a queue down one flank with a wall at its elbow.
-  { shape: "box", x: 16.5, z: 6.5, halfX: 3.6, halfZ: 0.9 },
-  { shape: "box", x: 16.5, z: 4.9, halfX: 1.15, halfZ: 0.8 },
-  { shape: "circle", x: 13.6, z: 5.05, radius: 0.38 },
-  { shape: "circle", x: 15, z: 5.05, radius: 0.38 },
-  { shape: "circle", x: 18, z: 5.05, radius: 0.38 },
-  { shape: "circle", x: 19.4, z: 5.05, radius: 0.38 },
-  { shape: "box", x: 20.9, z: 8.6, halfX: 0.65, halfZ: 0.45 },
-  { shape: "circle", x: 21.9, z: 8.6, radius: 0.38 },
-  { shape: "circle", x: 17.8, z: 9.2, radius: 0.35 },
+  // The anteroom: a bench along the west wall and a basin on its stand.
+  { shape: "box", x: 10.4, z: 5.5, halfX: 0.25, halfZ: 1.0 },
+  { shape: "circle", x: 13.6, z: 3.6, radius: 0.3 },
 
-  // The six cells. Each pallet lies along its cell's north wall, leaving the
-  // floor between the pallet and the iron front clear — which is the only part
-  // of a cell a prisoner has, and it should be walkable.
+  // The tribunal: the long table along the room's long axis, the dais behind it
+  // with the great crucifix at its back, the bench of judges, the secretary's
+  // desk off the east end, and the selette.
+  { shape: "box", x: 22.5, z: 6.2, halfX: 4.0, halfZ: 0.9 },
+  { shape: "box", x: 22.5, z: 4.5, halfX: 1.2, halfZ: 0.8 },
+  { shape: "box", x: 22.5, z: 3.12, halfX: 0.55, halfZ: 0.12 },
+  { shape: "circle", x: 19, z: 4.65, radius: 0.38 },
+  { shape: "circle", x: 20.6, z: 4.65, radius: 0.38 },
+  { shape: "circle", x: 24.4, z: 4.65, radius: 0.38 },
+  { shape: "circle", x: 26, z: 4.65, radius: 0.38 },
+  { shape: "box", x: 27.6, z: 8.6, halfX: 0.65, halfZ: 0.45 },
+  { shape: "circle", x: 28.5, z: 8.6, radius: 0.38 },
+  { shape: "circle", x: 23.8, z: 9.4, radius: 0.35 },
+
+  // The six cells. Each pallet lies along its cell's south wall at the west
+  // end — under the demon, in Marcello's — leaving the gate row clear to walk
+  // in by and the east half of the floor, where the moon falls, clear.
   ...CELL_ROWS.map((row) => ({
     shape: "box" as const,
-    x: 32.5,
-    z: row + 0.45,
+    x: 41.95,
+    z: row + 2.55,
     halfX: 0.85,
     halfZ: 0.35,
   })),
+  // And each has a stool in its north-east corner.
+  ...CELL_ROWS.map((row) => ({
+    shape: "circle" as const,
+    x: 44.35,
+    z: row + 0.45,
+    radius: 0.3,
+  })),
 
-  // The press, moved off the office doorway it used to stand across. At its old
-  // seat it left 0.50 of gap where the player needs 0.56, so the wardrobe room's
-  // own door was impassable and the room could only be entered from the vault.
-  { shape: "box", x: 12.5, z: 21.5, halfX: 0.8, halfZ: 0.45 },
-  { shape: "box", x: 12.5, z: 19.6, halfX: 0.8, halfZ: 0.3 },
+  // The gaoler's lodge: his stool.
+  { shape: "circle", x: 34.5, z: 27.3, radius: 0.3 },
 
-  // The Chamber of Groans, at four times its old floor. The four piers are the
-  // reason the size is usable rather than merely large: a hall ten metres across
-  // with nothing in it is read in one glance from the doorway, and a hall ten
-  // metres across with four columns in it has to be walked.
-  { shape: "box", x: 17.5, z: 27.5, halfX: 0.45, halfZ: 0.45 },
-  { shape: "box", x: 22.5, z: 27.5, halfX: 0.45, halfZ: 0.45 },
-  { shape: "box", x: 17.5, z: 32.5, halfX: 0.45, halfZ: 0.45 },
-  { shape: "box", x: 22.5, z: 32.5, halfX: 0.45, halfZ: 0.45 },
-  { shape: "box", x: 19.6, z: 30.2, halfX: 1.28, halfZ: 0.95 },
-  { shape: "box", x: 16.8, z: 33.8, halfX: 1.12, halfZ: 0.58 },
+  // The wardrobe: the press against the south wall, the bench by the door.
+  { shape: "box", x: 14, z: 36.5, halfX: 0.8, halfZ: 0.45 },
+  { shape: "box", x: 14, z: 33.6, halfX: 0.8, halfZ: 0.3 },
+
+  // The Chamber of Groans: four piers, the rack, the surgeon's table, and two
+  // basins.
+  { shape: "box", x: 29, z: 37, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 34, z: 37, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 29, z: 41, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 34, z: 41, halfX: 0.45, halfZ: 0.45 },
+  { shape: "box", x: 31.5, z: 40, halfX: 1.28, halfZ: 0.95 },
+  { shape: "box", x: 27.5, z: 43, halfX: 1.12, halfZ: 0.58 },
+  { shape: "circle", x: 36.4, z: 43.6, radius: 0.4 },
+  { shape: "circle", x: 36.4, z: 35.2, radius: 0.4 },
+
+  // The garden: six cypresses, the basin, and a bench.
+  { shape: "circle", x: 49, z: 16, radius: 0.45 },
+  { shape: "circle", x: 49, z: 19.5, radius: 0.45 },
+  { shape: "circle", x: 49, z: 23, radius: 0.45 },
+  { shape: "circle", x: 55, z: 16, radius: 0.45 },
+  { shape: "circle", x: 55, z: 19.5, radius: 0.45 },
+  { shape: "circle", x: 55, z: 23, radius: 0.45 },
+  { shape: "circle", x: 52, z: 20.5, radius: 1.15 },
+  { shape: "box", x: 54.6, z: 25.6, halfX: 0.8, halfZ: 0.25 },
 ];
 
 export function hitsCollider(x: number, z: number, radius = 0.22) {

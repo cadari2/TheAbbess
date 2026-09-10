@@ -466,6 +466,164 @@ name a different discovery.
 | Reachability | every room, and every discovery, reachable from the new spawn |
 | Routes | all seven rounds clear of masonry and props at the figure's own girth |
 
+## Stage D — the second plan: room, moonlight, and the way out
+
+Three asks, taken together because they are one building: give the place room,
+make it look better, and make it truer to the text — with the moon through the
+cell gratings, and the locked door at the top of the stair opening, for the
+right key, onto a moonlit garden.
+
+The source text was not reachable from the session that did this work (the
+network policy stopped every route to the digitised volume), so the readings
+that were not already in `docs/textual-evidence.md` are made from memory of the
+romance and are marked there as such. Nothing is quoted; the interface's rule
+against direct quotation holds.
+
+### The plan
+
+`app/world/plan.ts` is rewritten. The grid is 58×52 (was 40×40); the vault is
+5.4m (was 4.2); passages are two or three metres wide (were one or two); the
+cells are four metres deep by three across (were three by two). What the plan
+adds:
+
+| Room | What it is for |
+| --- | --- |
+| The angle of the passage, and a third leg | Ireland's passages turn corners at which steps stop being heard. Three legs and two blind angles replace one straight bore. |
+| The anteroom of the tribunal | Marcello is summoned in barefoot and bareheaded; this is where that is done to him. Bench, pegs, basin. |
+| The gaoler's lodge | Off the corridor's south end: his stool, his lamp, his board of six keys, and the bare seventh nail. |
+| The lower passage | The corridor's return, west and then south into the Chamber of Groans — what closes the circuit. |
+| The hidden lane and the garden | Beyond the moon door, on the landing's own level and under no roof. `Room.openAir` is new: the renderer lays no ceiling over it. |
+
+Loops, which the first plan had none of: tribunal → bent passage → corridor →
+lower passage → Chamber of Groans → vault → service return → tribunal; and vault
+→ wardrobe → office → gate. Every room is on a circuit.
+
+The sightline rule survives the growth: the longest clear run is 20 cells, the
+limit, and the gaoler's corridor is exempted by reading its columns from the
+plan rather than by two literals.
+
+### The door, the key, and what is behind them
+
+`DoorDefinition` gains `requiresKey`, `leaf` and `floor`. `updateDoors` takes
+what the player holds; a door that wants a key she has not got behaves as
+though she were not there, and `lockedDoorNear` lets the HUD say so once, in
+words. Two doors are new:
+
+- **The moon door**, on the landing, of oak and iron, locked. It answers to the
+  key of the moon door and to nothing else. It swings outward into the lane so
+  that what comes through the widening gap is light and not leaf, and a spot
+  standing in the open air of the lane, with shadows on, throws that light down
+  the flight as it opens.
+- **The keeper's panel**, a slab of stone on a pivot in the party wall beside
+  the demon. It yields to her like the gates; the veiled figure who walks the
+  slit passes it whether it is open or not, because the people of this building
+  are given no doors — and a wall walked through is exactly what the text has
+  Marcello see.
+
+The key hangs on a nail at the masked watcher's post in the password vault,
+beside his own lamp. It is a `Discovery` with `grants: MOON_KEY`: examining it
+takes it, the renderer takes it off its nail, and the HUD carries it. Placing
+it with the watcher rather than the gaoler is a reading: the romance never says
+where the guide had the key from, and the gaoler counts prisoners, not doors.
+His board says so — six keys, and under the seventh nail a scratched crescent.
+
+Beyond the door: a lane of three legs, walled, open to the sky, and a walled
+garden with a gravel walk, six cypresses, a stone basin with the moon in it,
+and in its north wall a further gate that never opens, per constraint 5. In the
+garden's west wall, low down, are the gaol's own windows seen from outside,
+with a little of the cells' lamplight behind them.
+
+### The moon through the gratings
+
+Every cell has a barred window high in its east wall, and what comes through
+it is the moon: a spot light with shadows on, so what it throws on the
+flagstones is the grating. This took three attempts, and the failures are
+worth recording because the geometry is less forgiving than it looks.
+
+The wall is a metre thick. A ray gets through a hole only if it is inside the
+opening at *both* faces of the block, so a window 0.6m tall admits nothing
+steeper than thirty degrees, and at thirty degrees light from a sill at 3.4m
+lands six metres inside — beyond the far wall. Attempt one put the light in a
+tunnel behind the bars, and the only rays that passed were the level ones,
+which lit the wall opposite and never the floor. Attempt two put the light
+above the wall top over an open well, and every ray clipped the underside of
+the head block on its way in. The window is now 1.3m tall, which admits
+fifty-two degrees, and the moon stands three and a half metres out and a metre
+above the wall top, at forty-six: the light lands on the west half of the
+floor, where a prisoner walks. Three's shadow pass renders back faces by
+default, which is what makes "inside a block" mean "enclosed" and had to be
+reasoned about for every piece.
+
+The window itself is a real hole. The wall block is instanced everywhere except
+where a window pierces it; there the masonry is laid in pieces around the hole
+— sill, head, two jambs — and the block behind is left out as a light well one
+cell square with the night painted on its far side. The shaft is two crossed
+translucent planes and seventy motes drifting down it. The character shader
+now loops over spot lights as well as point lights, so a prisoner standing in
+the bar of moonlight is lit by it; before, the figures could only see lamps.
+
+### Graphics, otherwise
+
+- The ceiling is a cell at a time (one instanced mesh) rather than a plane
+  across the world, so the lane and the garden have sky. Tiles cast, so the
+  moon over the roof cannot reach the rooms beneath it.
+- A sky dome and a moon, unlit and unfogged, seen through the one gap in the
+  vault; the camera's far plane is 400 (was 60) so the dome is not clipped.
+- Two more moon spots with shadows over the garden and the lane, and a faint
+  unshadowed sky fill so the dark side of a cypress is blue-black, not black.
+- Transverse ribs under the vault of the larger rooms and along the passage,
+  so 5.4m reads as built rather than as a lid.
+- Bracket lamps: somebody's light rather than the institution's — the
+  gaoler's, the watcher's, a prisoner's — lighting two metres and no more.
+- Candles beside the chestnut panelling; the great crucifix on the floor
+  against the tribunal's north wall with its head under the vault, as the
+  text has it; an hourglass at the General's hand.
+- Twelve lights cast shadows now. The maps are refreshed on alternate frames
+  (`shadowMap.autoUpdate = false`), starting with the first — which matters:
+  the first frame allocates the maps, and skipping it binds every shadow
+  sampler to an empty texture for a frame and produces several hundred WebGL
+  warnings before the console gives up reporting them. That was found the hard
+  way.
+
+### The easter eggs
+
+Listed in `docs/textual-evidence.md` with their sources. In brief: the poniard
+at the angle; the demon's pupils, which follow whoever stands in the cell by a
+centimetre; the panel and the veiled figure; the spider creeping on its web;
+*B. C.* scratched low in the further cell; the ninety-day tally; the board of
+keys and its bare nail; the plaque over the watcher's post with six strokes
+and no word; the gaol's windows seen from the garden; the moon in the basin;
+the gate that does not open.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `node --test tests/world-model.test.mjs` | 31 pass (was 28): three new — the locked door and its key, the panel and the slit, the roofless rooms on the upper floor |
+| `npx tsc --noEmit` | clean in `app/` and `preview/`; the `db/` and `worker/` errors are the pre-existing ones |
+| `pnpm lint` | clean |
+| `node tests/walkthrough.mjs` | see the run log in the pull request; four new checks cover the locked notice, taking the key, and the door with the key in hand |
+| Reachability | every room and every discovery, including the garden, reachable from the spawn; the garden only once the door is open, which the model expresses as a door and the flood ignores |
+| Routes | all nine rounds clear of masonry and props at the figure's girth, the veiled figure's through the slit included |
+| Floating audit | clean boot: nothing supported by nothing, nothing unbacked |
+| Visual review | screenshots of every room from the preview harness, before and after |
+
+**Verified by execution:** the plan derives with no sealed opening, no orphaned
+cell and no unnamed position; every opening is passable at its narrowest; the
+stair rises to the landing and the landing's height carries through the door,
+the lane and the garden without a step; the moon door stays shut for a minute
+with the player at it and opens in one travel with the key; the panel, open,
+leaves the slit passable at the player's girth; the figures walk two minutes
+without entering masonry; the scene boots with the audits clean.
+
+**Not verified by execution:** the look of the moonlight under a real GPU.
+Every screenshot here is SwiftShader at about one frame a second, and the
+shadow-map bias that is clean there may need a touch on hardware. Nor is the
+frame rate: twelve shadow-casting lights is a good deal more than the three
+the first plan had, and the alternate-frame refresh is the only concession
+made to it. Mouse-look feel, audio mix and touch ergonomics stay manual, as
+before.
+
 ## Deviations
 
 Deviations from the agreed plan, with reasoning. Where an edge case forced a
@@ -576,3 +734,31 @@ Six cells, four occupied. The empty two are not unfinished: a gaol in which ever
 cell has a named prisoner in it is a cast list, and the point of the repetition
 is that most of the slots are just slots. One of them carries a tally of ninety
 days cut by somebody who is no longer in it.
+
+### D1. The source text was not consulted
+
+The brief asked for the layout to be checked against the descriptions in
+Volume II. The session could not reach any digitised copy — the Internet
+Archive, Wikimedia Commons, HathiTrust, Google Books and Wikisource were all
+refused by the egress policy — so the check was made against what this project
+already recorded of the text and against memory of the romance. Every reading
+that rests on memory is marked in `docs/textual-evidence.md`. The garden in
+particular is the reader's brief and the earlier agreed constraint, not a
+verified detail of the text; it is presented in the interface as the
+adaptation's.
+
+### D2. The gaoler's corridor is the one long sightline, still
+
+The sightline rule was kept at twenty cells and the building grew to fit it,
+which cost two door widths: the door from the vault into the Chamber of Groans
+and the one from the wardrobe into the vault are placed a row apart from each
+other and from the office door so that no row runs office–wardrobe–vault–
+chamber. The alternative — raising the limit — would have been easier and
+would have been the wrong kind of easy.
+
+### D3. Cells are four metres deep, not three
+
+"Narrow and lofty" argues for depth over width, and four metres is what the
+moonlight needs: a window at three metres throws its light two and a half to
+four metres inside, and a cell three deep would have put the whole of it on
+the far wall.
