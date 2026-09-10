@@ -561,7 +561,7 @@ function DungeonMap({ x, y, dir, found, surveyed }: { x: number; y: number; dir:
         ),
       )}
       {roomZones.map((room) => !surveyed.has(room.name) && (
-        <i key={room.name} className="map-shroud" style={{ left: `${(room.x1 / W) * 100}%`, top: `${(room.y1 / H) * 100}%`, width: `${((room.x2 - room.x1) / W) * 100}%`, height: `${((room.y2 - room.y1) / H) * 100}%` }} />
+        <i key={room.id} className="map-shroud" style={{ left: `${(room.x1 / W) * 100}%`, top: `${(room.y1 / H) * 100}%`, width: `${((room.x2 - room.x1) / W) * 100}%`, height: `${((room.y2 - room.y1) / H) * 100}%` }} />
       ))}
       {discoveries.map((d) => (
         <b

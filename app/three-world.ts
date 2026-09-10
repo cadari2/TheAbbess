@@ -2239,6 +2239,8 @@ export class DungeonRenderer {
   private pupils: { mesh: THREE.Mesh; restX: number; restY: number }[] = [];
   private spider: { mesh: THREE.Group; from: THREE.Vector3; to: THREE.Vector3 } | null = null;
   private water: THREE.Mesh | null = null;
+  /** The cold slivers round the shut moon door, hidden once it stands open. */
+  private doorSlivers: THREE.Mesh[] = [];
   /**
    * Cells of the wall grid that are not instanced as whole blocks because a
    * window is cut through them; `buildMoonWindows` builds their masonry in
@@ -3105,11 +3107,12 @@ export class DungeonRenderer {
       sliver.position.set(MOON_X + x, y, MOON_FACE + 0.07);
       sliver.rotation.y = Math.PI;
       this.scene.add(sliver);
+      this.doorSlivers.push(sliver);
     }
     // Moonlight through the doorway: a spot standing in the open air of the
     // lane, aimed down through the door at the flight. The leaf casts, so a
     // shut door holds it back and an opening one lets it in across the treads.
-    const doorMoon = new THREE.SpotLight("#b8c9e6", 1.9, 0, 0.26, 0.5, 0);
+    const doorMoon = new THREE.SpotLight("#b8c9e6", 3.4, 0, 0.26, 0.5, 0);
     doorMoon.position.set(43.6, 14, 24);
     doorMoon.target.position.set(43, UPPER_FLOOR - 1.2, 42);
     doorMoon.castShadow = true;
@@ -3573,6 +3576,11 @@ export class DungeonRenderer {
       const door = DOORS.find((entry) => entry.id === state.id);
       if (!leaf || !door) continue;
       leaf.rotation.y = Math.atan2(door.along[0], door.along[1]) - door.swing * state.open;
+      // The light round the edges of a shut door is the light through an open
+      // one, and cannot also be drawn as edges once the leaf has moved.
+      if (state.id === "moon-door") {
+        for (const sliver of this.doorSlivers) sliver.visible = state.open < 0.04;
+      }
     }
   }
 

@@ -173,7 +173,7 @@ export const DISCOVERIES: readonly Discovery[] = [
     id: "moon-key",
     room: "vault",
     x: 18.6,
-    y: 36.5,
+    y: 32.4,
     kicker: "X • THE WATCHER’S NAIL",
     title: "The Key of the Moon Door",
     text: "On a nail beside the watcher’s lamp hangs one long iron key, blackened, its bow cut into a crescent. Nothing else in the vault is his; this is.",

@@ -90,5 +90,13 @@ debugHooks.probe = (yawOffset = 0, pitch = 0) => {
 
 Object.assign(window, debugHooks);
 
-function frame(t: number) { renderer.render(p, t); requestAnimationFrame(frame); }
+// `?held=moon-key` walks with the key in hand, so the moon door can be seen
+// open from the harness; `?open=moon-door` throws that door wide at once.
+const held = new Set((new URLSearchParams(location.search).get("held") ?? "").split(",").filter(Boolean));
+{
+  const open = new URLSearchParams(location.search).get("open");
+  const state = renderer.doorStates.find((door) => door.id === open);
+  if (state) state.open = 1;
+}
+function frame(t: number) { renderer.render(p, t, 16.7, held); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
